@@ -1,19 +1,25 @@
 #!/usr/bin/env python3
-"""比心手势 —— 双臂在身前拼出大爱心轮廓 (Kuavo 网页导入脚本)。
+"""比心手势 —— 双臂举过头顶，在头顶上方拼出大爱心轮廓 (Kuavo 网页导入脚本)。
+
+爱心朝向：尖角朝上 —— 双手在头顶上方最高处汇合 (顶尖)，两条手臂向斜下方
+扫出两个心瓣，再在稍低处 (下凹) 汇合。整体悬浮在头顶上方。
 
 用法
 ----
 1. 网页导入本文件后选择运行即可，默认行为：
      - 仅 ArmOnly 模式，底盘不动；
-     - 双臂同步扫出标准心形参数曲线 (左右各半边、镜像)，拼成完整爱心；
+     - 双臂同步扫出标准心形参数曲线 (左右各半边、镜像)，在头顶上方拼成爱心；
      - 做完后自动复位到中立姿态并切换 NoControl。
 2. 进阶可在容器内命令行加参数：
      python3 make_heart.py --sweeps 2 --speed 0.6 --fingers
 
 调参
 ----
-所有几何/时序常量集中在下方 <<< 可调常量 >>> 区。首次试跑若提示某航点
-IK 不可达，优先：调小 WIDTH / HEIGHT，或增大 FORWARD。
+所有几何/时序常量集中在下方 <<< 可调常量 >>> 区。头顶上方是手臂工作空间
+边缘，首次试跑若提示某航点 IK 不可达，优先：
+   - 调低 APEX_Z (顶尖高度)；
+   - 调小 WIDTH / HEIGHT；
+   - 略增 FORWARD (手臂向前多一点、向上少一点)。
 
 安全
 ----
@@ -35,11 +41,13 @@ if ROOT not in sys.path:
 from kuavo_sim import KuavoSim
 
 # ======================== <<< 可调常量 >>> ========================
-# 心形在躯干本体坐标系 (frame=2) 下的放置
-FORWARD  = 0.42   # body_x：手臂向前伸出距离 (m)，越大越远离身体
-WIDTH    = 0.28   # 半宽：爱心左右最大展开的一半 (m)
-HEIGHT   = 0.32   # 总高：爱心顶凹到顶尖的高度 (m)
-Z_CENTER = 0.45   # body_z：爱心竖直中心 (m)，约胸口高度
+# 心形在躯干本体坐标系 (frame=2) 下的放置 —— 头顶上方
+# 约定：body_x 前向(+), body_y 左(+)右(-), body_z 向上(+)。
+# 爱心「尖角朝上、双手在顶尖汇合」，整体悬浮头顶。
+APEX_Z  = 0.95   # body_z：顶尖 (双手汇合的最高点) 的高度 (m)，约头顶以上
+FORWARD = 0.10   # body_x：心形相对躯干向前的距离 (m)，头顶爱心通常接近正上方，偏前一点防干涉
+WIDTH   = 0.30   # 半宽：爱心左右最大展开的一半 (m)
+HEIGHT  = 0.30   # 总高：顶尖到下凹的高度 (m)
 
 # 扫描参数
 N_WAYPOINTS = 24  # 单条心形边的航点数 (越大越平滑、越慢)
@@ -77,14 +85,19 @@ def _heart_param(t):
 def heart_waypoints(n=N_WAYPOINTS):
     """生成 n+1 个航点 (含两端)，s 从 0→1。
 
-    s=0：两手在顶部凹陷汇合；s=1：在底部尖角汇合。
-    每个航点返回 (left_pose, right_pose)，均为
-    dict(xyz=[x,y,z], ypr=[yaw,pitch,roll])，本体坐标系。
+    「尖角朝上」头顶爱心：s=0 两手在顶尖 (最高处) 汇合；s=1 两手在下凹
+    (稍低处) 汇合。中间各扫一个心瓣。每个航点返回 (left_pose, right_pose)，
+    均为 dict(xyz=[x,y,z], ypr=[yaw,pitch,roll])，本体坐标系。
 
-    body_x = FORWARD                              (恒定)
-    body_y = side · (|x|/16) · WIDTH               (左 +，右 −)
-    body_z = Z_CENTER + (0.5 − ny) · HEIGHT         (ny=0 顶凹→z 最高，ny=1 尖角→z 最低)
-    末端朝向：手掌大致朝向身体前方 (掌心相对/向内)。
+    映射 (尖角朝上)：
+      body_x = FORWARD                               (恒定，略前以防干涉)
+      body_y = side · (|x|/16) · WIDTH                (左 +，右 −)
+      body_z = APEX_Z − s · HEIGHT                    (s=0 顶尖→z 最高；
+                                                       s=1 下凹→z 最低)
+    说明：心形曲线的 y 值是非单调的 (心瓣中段 y 比顶凹还高)，所以垂直高度
+    不用原始 y，而用归一化参数 s 单调映射，保证「顶尖最高、向两侧下落、
+    下凹最低」、尖角稳定朝上。
+    末端朝向：手掌大致朝向前外侧，使手臂在头顶上方勾勒轮廓。
     """
     pts = []
     for i in range(n + 1):
@@ -93,25 +106,25 @@ def heart_waypoints(n=N_WAYPOINTS):
         t_r = s * math.pi
         t_l = (2.0 - s) * math.pi
 
-        xr, yr = _heart_param(t_r)
-        xl, yl = _heart_param(t_l)
+        xr, _ = _heart_param(t_r)
+        xl, _ = _heart_param(t_l)
 
-        # 归一化到 [0,1]（顶凹 y=5 为 0，尖角 y=−17 为 1）
+        # 水平：用心形 x 控制左右展开 (镜像保证左右对称)
         nx_r = (xr / 16.0) if xr >= 0 else (-xr / 16.0)
-        ny_r = (yr - 5.0) / (-22.0)
         nx_l = (xl / 16.0) if xl >= 0 else (-xl / 16.0)
-        ny_l = (yl - 5.0) / (-22.0)
 
         # 右臂 side=−1 (y 负方向)，左臂 side=+1 (y 正方向)
-        # body_z：ny=0 顶凹→z 最高，ny=1 尖角→z 最低 (ROS body frame z 向上)
+        # body_z：用 s 单调映射 → 顶尖(s=0)最高，下凹(s=1)最低
         bx = FORWARD
-        r_xyz = [bx, -nx_r * WIDTH, Z_CENTER + (0.5 - ny_r) * HEIGHT]
-        l_xyz = [bx,  nx_l * WIDTH, Z_CENTER + (0.5 - ny_l) * HEIGHT]
+        r_xyz = [bx, -nx_r * WIDTH, APEX_Z - s * HEIGHT]
+        l_xyz = [bx,  nx_l * WIDTH, APEX_Z - s * HEIGHT]
 
-        # 掌心相对：偏航让手掌朝向身体中线
-        # 右手 yaw>0 使其朝 −y(向左)，左手 yaw<0 使其朝 +y(向右)
-        ypr_r = [0.6, 0.0, 0.0]
-        ypr_l = [-0.6, 0.0, 0.0]
+        # 末端朝向：顶尖处双手在最高点汇合、指尖向上，手臂斜向下扫出心瓣。
+        # 偏航让手掌朝外，俯仰让指尖略上。顶尖处偏航收敛到 0 (双手并拢朝上)。
+        yaw_r = -0.9 * nx_r   # 右手偏右外，顶尖(nx=0)时→0
+        yaw_l =  0.9 * nx_l   # 左手偏左外，顶尖时→0
+        ypr_r = [yaw_r, -0.4, 0.0]
+        ypr_l = [yaw_l, -0.4, 0.0]
 
         right = {"xyz": [round(v, 4) for v in r_xyz], "ypr": ypr_r}
         left  = {"xyz": [round(v, 4) for v in l_xyz], "ypr": ypr_l}
@@ -217,31 +230,31 @@ def run_heart(bot, sweeps=SWEEPS, speed=1.0, fingers=False, frame=2):
         return False
     print("[make_heart] 预检通过 ✓")
 
-    # 4) 慢速到起始点 (顶部凹陷，两手并拢)
+    # 4) 慢速到起始点 (顶尖，两手在头顶最高处并拢)
     start_l, start_r = pts[0]
-    print("[make_heart] 抬到起始点 (顶部凹陷)...")
+    print("[make_heart] 抬到起始点 (头顶顶尖，双手并拢)...")
     _go(bot, start_l, start_r, frame, dt=0.0, reach_timeout=8.0)
 
     # 5) 心形扫描
-    bottom_l, bottom_r = pts[-1]
+    notch_l, notch_r = pts[-1]
     for s in range(sweeps):
         print("[make_heart] 第 %d/%d 遍描心..." % (s + 1, sweeps))
         rng = range(1, len(pts))
-        # 偶数遍正向 (顶->底)，奇数遍反向 (底->顶)，让来回都成爱心
+        # 偶数遍正向 (顶尖->下凹)，奇数遍反向 (下凹->顶尖)，让来回都成爱心
         if s % 2 == 1:
             rng = range(len(pts) - 1, -1, -1)
         for i in rng:
             _go(bot, pts[i][0], pts[i][1], frame, dt=dt, reach_timeout=reach_timeout)
 
-    # 6) 底部尖角保持
-    print("[make_heart] 底部尖角保持 ~1s")
-    _go(bot, bottom_l, bottom_r, frame, dt=0.0, reach_timeout=4.0)
+    # 6) 下凹处保持
+    print("[make_heart] 下凹处保持 ~1s")
+    _go(bot, notch_l, notch_r, frame, dt=0.0, reach_timeout=4.0)
     time.sleep(1.0)
     if fingers:
         _maybe_finger_flourish(bot)
 
-    # 7) 回到顶部点 (两手重新并拢收拢)
-    print("[make_heart] 回到顶部点...")
+    # 7) 回到顶尖 (两手重新在头顶并拢收拢)
+    print("[make_heart] 回到顶尖...")
     _go(bot, start_l, start_r, frame, dt=0.0, reach_timeout=8.0)
     return True
 
