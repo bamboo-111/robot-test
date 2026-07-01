@@ -2,8 +2,8 @@
 """Imported Kuavo script - 抬起左臂后左手比 OK 手势。
 
 左侧：KuavoSim 控制左臂关节抬起；
-左手：官方 DexterousHand.make_gesture 输出 "ok" 手势。
-两套接口分属不同库，需各自初始化。
+左手：直接发布 /control_robot_hand_position 位置命令。
+这样不依赖当前容器里尚未完整安装的 kuavo_humanoid_sdk 生成消息包。
 """
 
 import os
@@ -13,40 +13,45 @@ import time
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
-
 from kuavo_sim import KuavoSim
-from kuavo_humanoid_sdk import KuavoSDK, KuavoRobot, DexterousHand
 
 
-# 14 维上肢关节零位（弧度）。顺序通常为：
+# 14 维上肢关节零位。5-W 官方 test_kuavo_wheel_real 示例对
+# /kuavo_arm_traj 的 JointState.position 使用角度值，不是弧度。
+# 顺序通常为：
 #   左[肩pitch, 肩yaw, 肩roll, 肘, 腕roll, 腕pitch, 腕yaw]
 #   右[肩pitch, 肩yaw, 肩roll, 肂, 腕roll, 腕pitch, 腕yaw]
 ZERO_POSE = [0.0] * 14
+OPEN_HAND = [0, 0, 0, 0, 0, 0]
+# 6 DOF order from official SDK:
+# thumb, thumb_aux, index, middle, ring, pinky.
+# "OK" keeps thumb/index more open and folds the remaining fingers.
+LEFT_OK_HAND = [10, 10, 15, 100, 100, 100]
+DISPLAY_SECONDS = 8.0
 
 
 def _left_arm_raised():
-    """左臂抬起姿态：左肩 pitch 抬起，肘部适度弯曲，右臂保持零位。"""
+    """左臂明显展臂姿态，使用官方 5-W 示例同量级的角度值。"""
     pose = list(ZERO_POSE)
-    pose[0] = 1.2     # 左肩 pitch（抬起）
-    pose[1] = 0.2     # 左肩 yaw
-    pose[2] = 0.6     # 左肩 roll
-    pose[3] = 0.8     # 左肘 弯曲
-    # 左腕保持零位（让灵巧手露出来，方便做 OK 手势）
+    pose[:7] = [-30.0, 20.0, 15.0, -45.0, 25.0, 10.0, -35.0]
     return pose
 
 
-def main():
-    # --- 1) 初始化官方 SDK（DexterousHand 依赖它）---
-    if not KuavoSDK().Init():
-        raise RuntimeError("Init KuavoSDK failed")
-    robot = KuavoRobot()
-    hand = DexterousHand()
+def _hold_hand_position(bot, seconds, left, right, rate_hz=10):
+    interval = 1.0 / float(rate_hz)
+    end = time.time() + float(seconds)
+    while time.time() < end:
+        bot.hand_position(left=left, right=right)
+        time.sleep(interval)
 
+
+def main():
     with KuavoSim() as bot:
         bot.wait_ready(timeout=30.0)
 
         # --- 2) 进入纯手臂控制模式 ---
         bot.set_mode_arm_only()
+        bot.set_arm_control_mode(2)
         time.sleep(1.0)
 
         # --- 3) 先回零位建立基准 ---
@@ -59,13 +64,13 @@ def main():
         time.sleep(1.0)  # 稳定一下，便于手部做手势
 
         # --- 5) 左手比 OK 手势（右手不动作，给默认） ---
-        hand.make_gesture(l_gesture_name="ok", r_gesture_name="open")
-        # make_gesture 为异步命令，保持一会儿让手势完成并展示
-        time.sleep(3.0)
+        # 手部命令不是 latched topic，持续发布更容易在仿真中稳定显示。
+        _hold_hand_position(bot, DISPLAY_SECONDS, left=LEFT_OK_HAND, right=OPEN_HAND)
+        time.sleep(1.0)
 
         # --- 6) 安全复位 ---
         # 先把手张开，再放下手臂
-        hand.open()
+        _hold_hand_position(bot, 1.0, left=OPEN_HAND, right=OPEN_HAND)
         time.sleep(1.0)
         bot.arm_joint(ZERO_POSE)
         bot.wait_arm_joint_reached(timeout=10.0)
