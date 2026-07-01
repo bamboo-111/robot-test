@@ -1,0 +1,66 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*.pyc
+*.pyo
+*.pyd
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+.env/
+.env
+.env.*
+
+# Build and packaging output
+build/
+dist/
+*.egg-info/
+
+# Logs and local runtime output
+*.log
+logs/
+outputs/
+tmp/
+.tmp/
+docs/env_snapshots/
+
+# Videos and rendered artifacts
+*.mp4
+*.avi
+*.mov
+*.mkv
+videos/
+
+# Datasets and trajectories
+datasets/
+data/raw/
+data/processed/
+*.npz
+*.npy
+*.hdf5
+*.h5
+
+# Model checkpoints
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+*.onnx
+
+# Local editor and OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Project-local history backups and generated exports
+backups/
+*.kuavoPrj.tar

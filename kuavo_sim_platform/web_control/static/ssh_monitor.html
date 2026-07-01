@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SSH 实时监控</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #111317;
+      --panel: #191d23;
+      --panel-2: #202630;
+      --text: #eef2f7;
+      --muted: #9ca8b8;
+      --line: #303846;
+      --accent: #4fb3ff;
+      --danger: #ff5b6b;
+      --ok: #3fd183;
+      --warn: #f2c94c;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main {
+      width: min(1200px, calc(100vw - 32px));
+      margin: 24px auto;
+      display: grid;
+      gap: 14px;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    h1 {
+      margin: 0;
+      font-size: 24px;
+      font-weight: 650;
+      letter-spacing: 0;
+    }
+    a, button {
+      min-height: 36px;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      color: var(--text);
+      border-radius: 6px;
+      padding: 8px 10px;
+      font: inherit;
+      text-decoration: none;
+    }
+    button { cursor: pointer; }
+    a:hover, button:hover { border-color: var(--accent); }
+    .status {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      color: var(--muted);
+    }
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--muted);
+    }
+    .dot.ok { background: var(--ok); }
+    .dot.fail { background: var(--danger); }
+    .dot.busy { background: var(--warn); }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+    section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      min-width: 0;
+    }
+    h2 {
+      margin: 0 0 10px;
+      font-size: 15px;
+      font-weight: 650;
+    }
+    pre {
+      margin: 0;
+      min-height: 220px;
+      max-height: 420px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: #090b0e;
+      color: #d8dee9;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 12px;
+      font: 12px/1.45 "Cascadia Mono", Consolas, monospace;
+    }
+    .wide { grid-column: 1 / -1; }
+    .muted { color: var(--muted); }
+    @media (max-width: 860px) {
+      .grid { grid-template-columns: 1fr; }
+      pre { max-height: 360px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>SSH 实时监控</h1>
+        <div class="muted">只读监控：WSL sshd、Windows 2222 转发、当前连接和最近登录日志。</div>
+      </div>
+      <div class="status">
+        <span id="dot" class="dot"></span>
+        <span id="status">等待刷新</span>
+        <button id="refresh">立即刷新</button>
+        <a href="/">返回控制台</a>
+      </div>
+    </header>
+
+    <div class="grid">
+      <section>
+        <h2>Windows 端口转发 / 2222</h2>
+        <pre id="windows">等待数据。</pre>
+      </section>
+      <section>
+        <h2>WSL sshd / 22</h2>
+        <pre id="wsl">等待数据。</pre>
+      </section>
+      <section class="wide">
+        <h2>摘要</h2>
+        <pre id="summary">等待数据。</pre>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    const dot = document.getElementById("dot");
+    const statusText = document.getElementById("status");
+    const windowsBox = document.getElementById("windows");
+    const wslBox = document.getElementById("wsl");
+    const summaryBox = document.getElementById("summary");
+
+    function section(output, name) {
+      const marker = `=== ${name} ===`;
+      const start = output.indexOf(marker);
+      if (start < 0) return "";
+      const next = output.indexOf("=== ", start + marker.length);
+      return output.slice(start + marker.length, next < 0 ? output.length : next).trim();
+    }
+
+    function render(data) {
+      const wslOut = data.wsl && data.wsl.output ? data.wsl.output : "";
+      const winOut = data.windows && data.windows.output ? data.windows.output : "";
+      const who = section(wslOut, "who") || "(none)";
+      const ss22 = section(wslOut, "ss_22") || "(none)";
+      const listen22 = section(wslOut, "listen_22") || "(none)";
+      const sshdPs = section(wslOut, "sshd_ps") || "(none)";
+      const journal = section(wslOut, "ssh_journal") || "(none)";
+      const portproxy = section(winOut, "portproxy") || "(none)";
+      const tcp2222 = section(winOut, "tcp_2222") || "(none)";
+      const test2222 = section(winOut, "sshd_local_test") || "(none)";
+
+      windowsBox.textContent = [
+        "=== portproxy ===",
+        portproxy,
+        "",
+        "=== tcp_2222 ===",
+        tcp2222,
+        "",
+        "=== local test ===",
+        test2222,
+      ].join("\n");
+
+      wslBox.textContent = [
+        "=== who ===",
+        who,
+        "",
+        "=== ss :22 connections ===",
+        ss22,
+        "",
+        "=== listen :22 ===",
+        listen22,
+        "",
+        "=== sshd processes ===",
+        sshdPs,
+        "",
+        "=== recent ssh logs ===",
+        journal,
+      ].join("\n");
+
+      summaryBox.textContent = [
+        `time: ${data.ts || new Date().toLocaleString()}`,
+        `api_ok: ${Boolean(data.ok)}`,
+        `wsl_command_ok: ${Boolean(data.wsl && data.wsl.ok)}`,
+        `windows_command_ok: ${Boolean(data.windows && data.windows.ok)}`,
+        "",
+        "current_login_users:",
+        who,
+        "",
+        "current_tcp_22_connections:",
+        ss22,
+      ].join("\n");
+    }
+
+    async function refresh() {
+      dot.className = "dot busy";
+      statusText.textContent = "刷新中...";
+      try {
+        const response = await fetch("/api/ssh/status", { cache: "no-store" });
+        const data = await response.json();
+        render(data);
+        dot.className = data.ok ? "dot ok" : "dot fail";
+        statusText.textContent = data.ok ? `已刷新 ${data.ts}` : `部分失败 ${data.ts}`;
+      } catch (error) {
+        dot.className = "dot fail";
+        statusText.textContent = "刷新失败";
+        summaryBox.textContent = String(error);
+      }
+    }
+
+    document.getElementById("refresh").addEventListener("click", refresh);
+    refresh();
+    setInterval(refresh, 5000);
+  </script>
+</body>
+</html>

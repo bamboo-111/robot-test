@@ -1,0 +1,14 @@
+name: base_probe
+steps:
+  - action: wait_ready
+    timeout: 30
+  - action: set_mode
+    mode: BaseOnly
+  - action: move_for
+    duration: 1.0
+    x: 0.05
+    y: 0.0
+    yaw: 0.0
+  - action: stop_base
+  - action: set_mode
+    mode: NoControl
