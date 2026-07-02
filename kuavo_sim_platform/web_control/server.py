@@ -48,6 +48,39 @@ SCRIPT_CATEGORIES = {
 }
 HIDDEN_SCRIPT_CATEGORIES = {"import-test"}
 
+# ---------------------------------------------------------------------------
+# episode / artifact / experiment whitelists (C 任务)
+# ---------------------------------------------------------------------------
+EPISODE_OUTPUTS_DIR = ROOT / "outputs" / "episodes"
+RUN_INDEX_PATH = ROOT / "outputs" / "run_index.jsonl"
+RUN_EPISODE_SCRIPT = ROOT / "scripts" / "run_episode.py"
+
+ARTIFACT_WHITELIST = {
+    "manifest.json",
+    "metrics.json",
+    "result.json",
+    "status.json",
+    "events.jsonl",
+    "latency_breakdown.json",
+    "external_timing.json",
+    "safe_stop.json",
+    "stdout.log",
+    "stderr.log",
+}
+
+# experiment 显示名 -> repo-relative config 路径
+EXPERIMENT_CONFIG_MAP = {
+    "fast_health_check": "configs/experiments/fast_health_check.yaml",
+    "read_only_interfaces": "configs/experiments/read_only_interfaces.yaml",
+    "full_interfaces_check": "configs/experiments/full_interfaces_check.yaml",
+}
+BASE_PROBE_KEY = "base_probe"
+BASE_PROBE_LABEL = "base_probe (需 A 确认)"
+BASE_PROBE_CONFIG = "configs/experiments/base_probe.yaml"
+
+RUN_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
+EPISODE_RUN_LOCK = threading.Lock()
+
 
 class CommandResult(dict):
     @classmethod
@@ -490,6 +523,211 @@ def action(name: str, params: dict[str, list[str]]) -> CommandResult:
     return CommandResult(ok=False, code=400, output=f"unknown action: {name}", ts=time.strftime("%Y-%m-%d %H:%M:%S"))
 
 
+# ---------------------------------------------------------------------------
+# episode helpers (C 任务)
+# ---------------------------------------------------------------------------
+
+
+def _validate_run_id(run_id: str) -> str:
+    if not run_id or not RUN_ID_RE.fullmatch(run_id):
+        raise ValueError("invalid run_id")
+    return run_id
+
+
+def _episode_dir(run_id: str) -> Path:
+    run_id = _validate_run_id(run_id)
+    ep_dir = EPISODE_OUTPUTS_DIR / run_id
+    if not ep_dir.exists() or not ep_dir.is_dir():
+        raise FileNotFoundError(f"episode not found: {run_id}")
+    try:
+        ep_dir.resolve().relative_to(EPISODE_OUTPUTS_DIR.resolve())
+    except ValueError:
+        raise ValueError("invalid run_id: path escape")
+    return ep_dir
+
+
+def list_recent_episodes(limit: int = 20) -> list[dict]:
+    episodes: list[dict] = []
+    if not RUN_INDEX_PATH.exists():
+        return episodes
+
+    with RUN_INDEX_PATH.open("r", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                episodes.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+
+    episodes.reverse()
+    episodes = episodes[:limit]
+
+    for ep in episodes:
+        run_id = str(ep.get("run_id") or "")
+        ep_dir = EPISODE_OUTPUTS_DIR / run_id
+
+        latency_path = ep_dir / "latency_breakdown.json"
+        if latency_path.exists():
+            ep["latency_breakdown_path"] = "latency_breakdown.json"
+            try:
+                latency = json.loads(latency_path.read_text(encoding="utf-8", errors="replace"))
+                ep["external_timing_available"] = bool(latency.get("external_timing_available"))
+            except Exception:
+                ep["external_timing_available"] = False
+        else:
+            ep["latency_breakdown_path"] = None
+            ep["external_timing_available"] = False
+
+        safe_stop_path = ep_dir / "safe_stop.json"
+        if safe_stop_path.exists():
+            try:
+                ss = json.loads(safe_stop_path.read_text(encoding="utf-8", errors="replace"))
+                ep["safe_stop_ok"] = ss.get("ok")
+            except Exception:
+                ep["safe_stop_ok"] = None
+        else:
+            ep["safe_stop_ok"] = None
+
+    return episodes
+
+
+def get_episode_detail(run_id: str) -> dict:
+    ep_dir = _episode_dir(run_id)
+
+    detail: dict = {
+        "run_id": run_id,
+        "episode_dir": str(ep_dir.relative_to(ROOT)),
+        "artifacts": [],
+    }
+
+    for name in sorted(ARTIFACT_WHITELIST):
+        artifact_path = ep_dir / name
+        if artifact_path.exists() and artifact_path.is_file():
+            detail["artifacts"].append({
+                "name": name,
+                "size": artifact_path.stat().st_size,
+            })
+
+    metrics_path = ep_dir / "metrics.json"
+    if metrics_path.exists():
+        try:
+            detail["metrics"] = json.loads(metrics_path.read_text(encoding="utf-8", errors="replace"))
+        except Exception:
+            detail["metrics"] = None
+    else:
+        detail["metrics"] = None
+
+    result_path = ep_dir / "result.json"
+    if result_path.exists():
+        try:
+            detail["result"] = json.loads(result_path.read_text(encoding="utf-8", errors="replace"))
+        except Exception:
+            detail["result"] = None
+    else:
+        detail["result"] = None
+
+    return detail
+
+
+def read_artifact(run_id: str, artifact_name: str) -> dict:
+    if artifact_name not in ARTIFACT_WHITELIST:
+        raise ValueError(f"artifact not in whitelist: {artifact_name}")
+
+    ep_dir = _episode_dir(run_id)
+    artifact_path = ep_dir / artifact_name
+
+    try:
+        artifact_path.resolve().relative_to(ep_dir.resolve())
+    except ValueError:
+        raise ValueError("invalid artifact name: path escape")
+
+    if not artifact_path.exists() or not artifact_path.is_file():
+        raise FileNotFoundError(f"artifact not found: {artifact_name}")
+
+    raw = artifact_path.read_text(encoding="utf-8", errors="replace")
+
+    if artifact_name.endswith(".json"):
+        try:
+            return {"name": artifact_name, "type": "json", "content": json.loads(raw)}
+        except json.JSONDecodeError:
+            return {"name": artifact_name, "type": "text", "content": raw}
+    elif artifact_name.endswith(".jsonl"):
+        lines = [
+            json.loads(l)
+            for l in raw.splitlines()
+            if l.strip()
+        ]
+        return {"name": artifact_name, "type": "jsonl", "content": lines}
+    else:
+        return {"name": artifact_name, "type": "text", "content": raw}
+
+
+def _run_episode_subprocess(config_rel: str, operator: str) -> CommandResult:
+    config_path = ROOT / config_rel
+    if not config_path.exists():
+        return CommandResult(
+            ok=False,
+            code=404,
+            output=f"config file not found: {config_rel}",
+            ts=time.strftime("%Y-%m-%d %H:%M:%S"),
+        )
+    try:
+        config_path.resolve().relative_to(ROOT.resolve())
+    except ValueError:
+        return CommandResult(
+            ok=False,
+            code=400,
+            output=f"config path escapes repo root: {config_rel}",
+            ts=time.strftime("%Y-%m-%d %H:%M:%S"),
+        )
+
+    result = run_command(
+        [
+            sys.executable,
+            str(RUN_EPISODE_SCRIPT),
+            "--config", str(config_path),
+            "--operator", operator,
+        ],
+        timeout=300,
+    )
+
+    output_text = result.get("output") or ""
+    run_id = None
+    for line in output_text.splitlines():
+        if "episode created:" in line:
+            for sep in ("episodes/", "episodes\\"):
+                if sep in line:
+                    run_id = line.split(sep, 1)[-1].strip()
+                    break
+            break
+
+    result["run_id"] = run_id
+    return result
+
+
+def list_available_experiments() -> list[dict]:
+    experiments: list[dict] = []
+    for name, config_rel in EXPERIMENT_CONFIG_MAP.items():
+        config_exists = (ROOT / config_rel).exists()
+        experiments.append({
+            "name": name,
+            "config": config_rel,
+            "available": config_exists,
+            "enabled": True,
+        })
+    experiments.append({
+        "name": BASE_PROBE_KEY,
+        "label": BASE_PROBE_LABEL,
+        "config": BASE_PROBE_CONFIG,
+        "available": (ROOT / BASE_PROBE_CONFIG).exists(),
+        "enabled": False,
+        "disabled_reason": "需要 A 确认",
+    })
+    return experiments
+
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(STATIC_DIR), **kwargs)
@@ -519,6 +757,62 @@ class Handler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/ssh/status":
             self.send_json(ssh_status())
             return
+        if parsed.path == "/api/experiments":
+            self.send_json({"experiments": list_available_experiments()})
+            return
+        # /api/episodes                -> list
+        # /api/episodes/<run_id>       -> detail
+        # /api/episodes/<run_id>/artifact?name=... -> artifact
+        if parsed.path == "/api/episodes" or parsed.path == "/api/episodes/":
+            try:
+                self.send_json({"episodes": list_recent_episodes()})
+            except Exception as exc:
+                self.send_json(
+                    {"ok": False, "code": 500, "output": f"{type(exc).__name__}: {exc}"},
+                    status=500,
+                )
+            return
+
+        ep_match = re.match(r"^/api/episodes/([^/]+)(?:/artifact)?$", parsed.path)
+        if ep_match:
+            run_id = ep_match.group(1)
+            if run_id == "run":
+                self.send_json(
+                    {"ok": False, "code": 405, "output": "use POST /api/episodes/run"},
+                    status=405,
+                )
+                return
+            if "/artifact" in parsed.path:
+                query = parse_qs(parsed.query)
+                artifact_name = (query.get("name") or [""])[0]
+                try:
+                    self.send_json(read_artifact(run_id, artifact_name))
+                except (ValueError, FileNotFoundError) as exc:
+                    self.send_json(
+                        {"ok": False, "code": 400, "output": str(exc)},
+                        status=400,
+                    )
+                except Exception as exc:
+                    self.send_json(
+                        {"ok": False, "code": 500, "output": f"{type(exc).__name__}: {exc}"},
+                        status=500,
+                    )
+                return
+            else:
+                try:
+                    self.send_json(get_episode_detail(run_id))
+                except (ValueError, FileNotFoundError) as exc:
+                    self.send_json(
+                        {"ok": False, "code": 404, "output": str(exc)},
+                        status=404,
+                    )
+                except Exception as exc:
+                    self.send_json(
+                        {"ok": False, "code": 500, "output": f"{type(exc).__name__}: {exc}"},
+                        status=500,
+                    )
+                return
+
         if parsed.path == "/api/action":
             query = parse_qs(parsed.query)
             name = (query.get("name") or [""])[0]
@@ -551,6 +845,62 @@ class Handler(SimpleHTTPRequestHandler):
                 payload = json.loads(raw)
                 result = run_serialized(lambda: import_script(payload.get("name", ""), payload.get("content", "")))
                 self.send_json(result)
+            except Exception as exc:
+                self.send_json(
+                    {
+                        "ok": False,
+                        "code": 400,
+                        "output": f"{type(exc).__name__}: {exc}",
+                        "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    },
+                    status=400,
+                )
+            return
+        if parsed.path == "/api/episodes/run":
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if length <= 0:
+                    raise ValueError("empty request body")
+                raw = self.rfile.read(length).decode("utf-8")
+                payload = json.loads(raw)
+                experiment = str(payload.get("experiment", "")).strip()
+                operator = str(payload.get("operator", "")).strip()
+
+                if not experiment:
+                    raise ValueError("experiment is required")
+                if not operator:
+                    raise ValueError("operator is required")
+
+                config_rel: str
+                if experiment == BASE_PROBE_KEY:
+                    if operator != "A":
+                        raise ValueError("base_probe requires operator=A confirmation (B/C 不允许自动运行)")
+                    config_rel = BASE_PROBE_CONFIG
+                elif experiment in EXPERIMENT_CONFIG_MAP:
+                    config_rel = EXPERIMENT_CONFIG_MAP[experiment]
+                else:
+                    raise ValueError(f"experiment not whitelisted: {experiment}")
+
+                def _run():
+                    return _run_episode_subprocess(config_rel, operator)
+
+                if not EPISODE_RUN_LOCK.acquire(blocking=False):
+                    self.send_json(
+                        {
+                            "ok": False,
+                            "code": 409,
+                            "output": "another episode is already running",
+                            "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
+                        },
+                        status=409,
+                    )
+                    return
+                try:
+                    result = _run()
+                    status_code = 409 if result.get("code") == 409 else 200
+                    self.send_json(result, status=status_code)
+                finally:
+                    EPISODE_RUN_LOCK.release()
             except Exception as exc:
                 self.send_json(
                     {
