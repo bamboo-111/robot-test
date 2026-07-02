@@ -1,0 +1,26 @@
+schema_version: "0.2"
+task_name: read_only_interfaces
+entry_type: check
+operator: A
+permission_level: read_only
+timeout_sec: 30
+
+artifacts:
+  save_stdout: true
+  save_stderr: true
+  save_config: true
+  save_resolved_config: true
+  save_manifest: true
+  save_events: true
+  save_capabilities: true
+
+safety:
+  require_preflight: false
+  safe_stop_on_exit: false
+  allow_motion: false
+
+check:
+  name: interfaces
+
+success_criteria:
+  type: exit_code_zero

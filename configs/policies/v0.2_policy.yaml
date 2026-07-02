@@ -1,0 +1,47 @@
+schema_version: "0.2"
+
+roles:
+  A:
+    allow_entry_types:
+      - check
+      - scenario
+      - script
+      - builtin_action
+    allow_motion: true
+    allow_admin_actions: true
+    allowed_tasks: "*"
+
+  B:
+    allow_entry_types:
+      - check
+      - scenario
+    allow_motion: true
+    allow_admin_actions: false
+    allowed_tasks:
+      - read_only_interfaces
+      - smoke_test
+      - bc_safe_probe
+      - base_probe
+
+  C:
+    allow_entry_types:
+      - check
+      - scenario
+    allow_motion: true
+    allow_admin_actions: false
+    allowed_tasks:
+      - read_only_interfaces
+      - smoke_test
+      - bc_safe_probe
+      - base_probe
+
+dangerous_actions:
+  - stop_sim
+  - sleep
+  - pause
+  - resume
+  - arbitrary_script
+
+defaults:
+  unknown_operator_role: "B"
+  deny_unknown_task_for_bc: true
