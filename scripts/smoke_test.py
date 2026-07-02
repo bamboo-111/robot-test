@@ -154,12 +154,20 @@ def check_import_dir() -> CheckResult:
     return CheckResult("script import dir", "WARN", False, f"no candidate exists: {candidates}", critical=False)
 
 
-def main() -> int:
-    emit_timing("python_process_start")
-    print("[INFO] v0.1-alpha smoke test started")
-    print("[INFO] This script is read-only and does not publish control commands")
+def build_checks(probe: str = "full") -> list[CheckResult]:
+    """Build the check list for the requested probe mode.
 
-    checks = [
+    full        : legacy probe set (Docker + ROS interfaces + web + import dir)
+    fast_health : host-only probe that never calls Docker/ROS, so it can pass
+                  even when the simulator is down.
+    """
+    if probe == "fast_health":
+        return [
+            check_web_console(),
+            check_import_dir(),
+            check_python_runner(),
+        ]
+    return [
         check_docker_cli(),
         check_container_exists(),
         check_container_running(),
@@ -170,6 +178,38 @@ def main() -> int:
         check_web_console(),
         check_import_dir(),
     ]
+
+
+def check_python_runner() -> CheckResult:
+    """Fast host-only check: confirm the Python episode runner imports cleanly."""
+    import importlib
+
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    try:
+        importlib.import_module("kuavo_sim_platform.episode")
+        return CheckResult("python runner", "PASS", True, "episode runner importable", critical=False)
+    except Exception as exc:  # noqa: BLE001 - probe must not crash the check
+        return CheckResult("python runner", "WARN", False, str(exc), critical=False)
+
+
+def main() -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Read-only smoke test")
+    parser.add_argument(
+        "--probe",
+        choices=["full", "fast_health"],
+        default="full",
+        help="full runs Docker/ROS probes; fast_health skips them",
+    )
+    args = parser.parse_args()
+
+    emit_timing("python_process_start")
+    print(f"[INFO] v0.1-alpha smoke test started (probe={args.probe})")
+    print("[INFO] This script is read-only and does not publish control commands")
+
+    checks = build_checks(args.probe)
 
     for result in checks:
         print_result(result)

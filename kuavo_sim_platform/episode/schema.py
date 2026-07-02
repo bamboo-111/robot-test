@@ -12,8 +12,10 @@ import yaml
 
 SCHEMA_VERSION = "0.2"
 SUPPORTED_ENTRY_TYPES = {"check", "scenario"}
-SUPPORTED_CHECKS = {"interfaces", "smoke_test"}
+SUPPORTED_CHECKS = {"interfaces", "smoke_test", "fast_health"}
 SCENARIO_WHITELIST = {"kuavo_sim_platform/scenarios/base_probe.yaml"}
+
+SUPPORTED_CAPABILITIES_MODES = {"full", "cached", "minimal", "off"}
 
 DEFAULT_ARTIFACTS = {
     "save_stdout": True,
@@ -25,6 +27,11 @@ DEFAULT_ARTIFACTS = {
     "save_capabilities": True,
     "save_scenario_copy": False,
     "save_safe_stop": False,
+}
+
+DEFAULT_CAPABILITIES = {
+    "mode": "full",
+    "max_age_sec": 30,
 }
 
 DEFAULT_SAFETY = {
@@ -172,6 +179,21 @@ def resolve_config(raw_config: dict[str, Any], repo_root: Path, operator_overrid
         scenario = resolve_scenario(config, repo_root)
         check = {}
 
+    capabilities = dict(DEFAULT_CAPABILITIES)
+    capabilities.update(config.get("capabilities") or {})
+    cap_mode = str(capabilities.get("mode", "full")).strip()
+    if cap_mode not in SUPPORTED_CAPABILITIES_MODES:
+        raise ConfigError(
+            f"unsupported capabilities.mode: {cap_mode!r} (expected one of {sorted(SUPPORTED_CAPABILITIES_MODES)})"
+        )
+    try:
+        cap_max_age = int(capabilities.get("max_age_sec", 30))
+    except (TypeError, ValueError) as exc:
+        raise ConfigError("capabilities.max_age_sec must be an integer") from exc
+    if cap_max_age <= 0:
+        raise ConfigError("capabilities.max_age_sec must be positive")
+    capabilities = {"mode": cap_mode, "max_age_sec": cap_max_age}
+
     resolved = {
         "schema_version": SCHEMA_VERSION,
         "repo_root": str(repo_root),
@@ -184,6 +206,7 @@ def resolve_config(raw_config: dict[str, Any], repo_root: Path, operator_overrid
         "safety": safety,
         "check": check,
         "scenario": scenario,
+        "capabilities": capabilities,
         "success_criteria": success_criteria,
     }
 

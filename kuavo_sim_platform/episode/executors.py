@@ -127,7 +127,7 @@ def run_command(command_args: list[str], repo_root: Path, timeout_sec: int, time
 
 def run_check(config: dict, repo_root: Path) -> ExecutorResult:
     check_name = config.get("check", {}).get("name")
-    if check_name not in {"interfaces", "smoke_test"}:
+    if check_name not in {"interfaces", "smoke_test", "fast_health"}:
         return ExecutorResult(
             exit_code=2,
             ok=False,
@@ -136,7 +136,12 @@ def run_check(config: dict, repo_root: Path) -> ExecutorResult:
             command="",
         )
 
-    command_args = [sys.executable, "scripts/smoke_test.py"]
+    # fast_health runs the host-only probe and never touches ROS/Docker,
+    # so it can pass even when the simulator is down.
+    if check_name == "fast_health":
+        command_args = [sys.executable, "scripts/smoke_test.py", "--probe", "fast_health"]
+    else:
+        command_args = [sys.executable, "scripts/smoke_test.py"]
     return run_command(
         command_args,
         repo_root,

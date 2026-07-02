@@ -1,0 +1,16 @@
+schema_version: "0.2"
+benchmark_id: interfaces_check_10
+description: >-
+  Run the full ROS interface check 10 times. This benchmark REQUIRES a live ROS
+  master and the kuavo5w_sim container; individual episode failures (e.g. ROS
+  down) do not abort the benchmark. Safe for B/C: read-only checks only, no
+  motion, no base_probe.
+
+experiment_configs:
+  - configs/experiments/full_interfaces_check.yaml
+
+runs_per_experiment: 10
+operator: B
+
+launch:
+  command: "python scripts/run_episode.py --config {config} --operator {operator}"

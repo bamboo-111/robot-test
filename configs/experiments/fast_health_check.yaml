@@ -1,0 +1,34 @@
+schema_version: "0.2"
+task_name: fast_health_check
+entry_type: check
+operator: B
+permission_level: read_only
+timeout_sec: 30
+
+artifacts:
+  save_stdout: true
+  save_stderr: true
+  save_config: true
+  save_resolved_config: true
+  save_manifest: true
+  save_events: true
+  save_capabilities: true
+
+safety:
+  require_preflight: false
+  safe_stop_on_exit: false
+  allow_motion: false
+
+# fast_health never depends on a ROS master, rostopic, /cmd_vel, or
+# /mobile_manipulator_mpc_control; it only probes repo/outputs/policy/Python.
+check:
+  name: fast_health
+
+# Skip the heavy Docker/ROS/web capability probes so this check can pass
+# even when the simulator is down.
+capabilities:
+  mode: minimal
+  max_age_sec: 30
+
+success_criteria:
+  type: exit_code_zero

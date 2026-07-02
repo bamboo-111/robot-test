@@ -1,0 +1,19 @@
+schema_version: "0.2"
+benchmark_id: health_check_20
+description: >-
+  Run the fast (ROS-independent) health check 20 times to characterize episode
+  overhead and capabilities-cache behavior. Safe for B/C to run: no ROS master,
+  no Docker exec, no /cmd_vel, no motion.
+
+# Whitelist of experiments this benchmark may run. B/C benchmarks must only
+# reference read-only check experiments; base_probe is intentionally absent.
+experiment_configs:
+  - configs/experiments/fast_health_check.yaml
+
+runs_per_experiment: 20
+operator: B
+
+# Episodes are launched via the standard episode runner only. The benchmark
+# runner never calls PowerShell, Docker, restore, or /cmd_vel directly.
+launch:
+  command: "python scripts/run_episode.py --config {config} --operator {operator}"
