@@ -1,0 +1,30 @@
+schema_version: "0.2"
+task_name: base_probe
+entry_type: scenario
+operator: A
+permission_level: bc_safe
+timeout_sec: 180
+
+artifacts:
+  save_stdout: true
+  save_stderr: true
+  save_config: true
+  save_resolved_config: true
+  save_manifest: true
+  save_events: true
+  save_capabilities: true
+  save_scenario_copy: true
+  save_safe_stop: true
+
+safety:
+  require_preflight: true
+  safe_stop_on_exit: true
+  allow_motion: true
+
+scenario:
+  file: kuavo_sim_platform/scenarios/base_probe.yaml
+  container_root: /root/kuavo_deploy
+  ready_timeout_sec: 30
+
+success_criteria:
+  type: exit_code_zero

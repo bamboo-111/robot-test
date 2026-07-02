@@ -42,6 +42,9 @@ dangerous_actions:
   - resume
   - arbitrary_script
 
+scenario_whitelist:
+  - kuavo_sim_platform/scenarios/base_probe.yaml
+
 defaults:
   unknown_operator_role: "B"
   deny_unknown_task_for_bc: true

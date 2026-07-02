@@ -186,6 +186,51 @@ def wsl_host_exec(command: str, timeout: int = 20) -> CommandResult:
     )
 
 
+def stop_simulator_launch() -> CommandResult:
+    return wsl_exec(
+        r"""
+set +e
+kill_matching() {
+  pattern="$1"
+  signal="$2"
+  for target in $(pgrep -f "$pattern" 2>/dev/null || true); do
+    test "$target" = "$$" && continue
+    test "$target" = "$PPID" && continue
+    kill "$signal" "$target" 2>/dev/null || true
+  done
+}
+if test -f /tmp/kuavo5w_mujoco.pid; then
+  pid="$(cat /tmp/kuavo5w_mujoco.pid 2>/dev/null)"
+  if test -n "$pid" && kill -0 "$pid" 2>/dev/null; then
+    pgid="$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')"
+    if test -n "$pgid"; then
+      kill -TERM "-$pgid" 2>/dev/null || true
+    fi
+    kill -TERM "$pid" 2>/dev/null || true
+  fi
+fi
+kill_matching 'start-kuavo5w-mujoco.sh' -TERM
+kill_matching 'roslaunch' -TERM
+kill_matching 'roscore' -TERM
+kill_matching 'rosmaster' -TERM
+kill_matching 'MujocoNodelet' -TERM
+kill_matching 'start_node.sh' -TERM
+sleep 2
+kill_matching 'start-kuavo5w-mujoco.sh' -KILL
+kill_matching 'roslaunch' -KILL
+kill_matching 'roscore' -KILL
+kill_matching 'rosmaster' -KILL
+kill_matching 'MujocoNodelet' -KILL
+kill_matching 'start_node.sh' -KILL
+rm -f /tmp/kuavo5w_mujoco.pid
+echo simulator launch stopped
+ps -eo pid,ppid,stat,comm,args | grep -E 'mujoco|roslaunch|roscore|rosmaster' | grep -v grep || true
+exit 0
+""",
+        timeout=40,
+    )
+
+
 def powershell_exec(command: str, timeout: int = 20) -> CommandResult:
     return run_command(
         [
@@ -406,11 +451,7 @@ def action(name: str, params: dict[str, list[str]]) -> CommandResult:
             timeout=30,
         )
     if name == "sleep":
-        return wsl_exec(
-            "pkill -f roslaunch || true; pkill -f roscore || true; "
-            "rm -f /tmp/kuavo5w_mujoco.pid; echo simulator launch stopped",
-            timeout=30,
-        )
+        return stop_simulator_launch()
     if name == "stop_sim":
         return action("sleep", params)
     if name == "log":
@@ -422,7 +463,11 @@ def action(name: str, params: dict[str, list[str]]) -> CommandResult:
     if name == "interfaces":
         return ros_interfaces()
     if name == "scenario":
-        scenario = (params.get("name") or [""])[0]
+        scenario = (
+            (params.get("scenario") or [""])[0]
+            or (params.get("file") or [""])[0]
+            or (params.get("name") or [""])[0]
+        )
         return platform(
             "-Scenario",
             scenario_container_path(scenario),

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run a v0.2-alpha file-based episode."""
+"""Run a v0.2 file-based episode."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from kuavo_sim_platform.episode import run_episode
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run a Kuavo v0.2-alpha episode")
+    parser = argparse.ArgumentParser(description="Run a Kuavo v0.2 episode")
     parser.add_argument("--config", required=True, help="Path to experiment config YAML")
     parser.add_argument("--operator", help="Override operator from the config")
     return parser

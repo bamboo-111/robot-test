@@ -43,3 +43,11 @@ def check_policy(config: dict[str, Any], policy: dict[str, Any]) -> None:
 
     if bool(config.get("safety", {}).get("allow_motion")) and not bool(role.get("allow_motion")):
         raise PolicyError(f"operator {operator!r} may not run motion tasks")
+
+    if entry_type == "scenario":
+        scenario_file = str(config.get("scenario", {}).get("file", "")).strip()
+        scenario_whitelist = set(policy.get("scenario_whitelist") or [])
+        if not scenario_whitelist:
+            raise PolicyError("policy scenario_whitelist is empty")
+        if scenario_file not in scenario_whitelist:
+            raise PolicyError(f"scenario is not whitelisted: {scenario_file!r}")

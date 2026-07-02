@@ -320,7 +320,7 @@
     });
 
     document.getElementById("runScenario").addEventListener("click", () => {
-      if (scenarioSelect.value) callAction("scenario", { name: scenarioSelect.value });
+      if (scenarioSelect.value) callAction("scenario", { scenario: scenarioSelect.value });
     });
 
     document.getElementById("importScript").addEventListener("click", importScript);

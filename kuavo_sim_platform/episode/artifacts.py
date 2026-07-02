@@ -137,6 +137,31 @@ def write_initial_artifacts(
     write_text(episode_dir / "command.txt", "")
 
 
+def write_safe_stop_artifacts(episode_dir: Path, safe_stop: dict[str, Any]) -> None:
+    if safe_stop.get("attempted"):
+        write_text(episode_dir / "safe_stop_stdout.log", str(safe_stop.get("stdout") or ""))
+        write_text(episode_dir / "safe_stop_stderr.log", str(safe_stop.get("stderr") or ""))
+        payload = {
+            "schema_version": SCHEMA_VERSION,
+            "attempted": True,
+            "ok": safe_stop.get("ok"),
+            "exit_code": safe_stop.get("exit_code"),
+            "duration_sec": safe_stop.get("duration_sec"),
+            "command": safe_stop.get("command") or "",
+            "stdout_log": "safe_stop_stdout.log",
+            "stderr_log": "safe_stop_stderr.log",
+            "failure_reason": safe_stop.get("failure_reason"),
+        }
+    else:
+        payload = {
+            "schema_version": SCHEMA_VERSION,
+            "attempted": False,
+            "ok": None,
+            "reason": safe_stop.get("reason") or "not_required",
+        }
+    write_json(episode_dir / "safe_stop.json", payload)
+
+
 def write_final_artifacts(
     episode_dir: Path,
     repo_root: Path,
@@ -152,6 +177,7 @@ def write_final_artifacts(
     finished_at: str,
     duration_sec: float,
     failure_reason: str | None,
+    safe_stop: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     write_text(episode_dir / "stdout.log", stdout)
     write_text(episode_dir / "stderr.log", stderr)
@@ -160,6 +186,7 @@ def write_final_artifacts(
     capabilities = collect_capabilities(repo_root)
     write_json(episode_dir / "capabilities.json", capabilities)
 
+    scenario = config.get("scenario") or {}
     metrics = {
         "schema_version": SCHEMA_VERSION,
         "run_id": run_id,
@@ -175,13 +202,23 @@ def write_final_artifacts(
         "ok": ok,
         "success": ok,
         "failure_reason": failure_reason,
-        "safe_stop_attempted": False,
-        "safe_stop_ok": None,
         "stdout_log": "stdout.log",
         "stderr_log": "stderr.log",
         "config_path": "config.yaml",
         "resolved_config_path": "resolved_config.yaml",
     }
+    if config["entry_type"] == "scenario":
+        metrics["scenario_path"] = "scenario.yaml"
+        metrics["scenario_file"] = scenario.get("file")
+        metrics["scenario_container_file"] = scenario.get("container_file")
+    if safe_stop is None:
+        metrics["safe_stop_attempted"] = False
+        metrics["safe_stop_ok"] = None
+    else:
+        metrics["safe_stop_attempted"] = bool(safe_stop.get("attempted"))
+        metrics["safe_stop_ok"] = safe_stop.get("ok")
+        metrics["safe_stop_exit_code"] = safe_stop.get("exit_code")
+        metrics["safe_stop_path"] = "safe_stop.json"
     write_json(episode_dir / "metrics.json", metrics)
 
     result = {
@@ -199,6 +236,26 @@ def write_final_artifacts(
     }
     write_json(episode_dir / "result.json", result)
 
+    artifacts = {
+        "config": "config.yaml",
+        "resolved_config": "resolved_config.yaml",
+        "metrics": "metrics.json",
+        "result": "result.json",
+        "status": "status.json",
+        "events": "events.jsonl",
+        "stdout": "stdout.log",
+        "stderr": "stderr.log",
+        "command": "command.txt",
+        "capabilities": "capabilities.json",
+    }
+    if config["entry_type"] == "scenario":
+        artifacts["scenario"] = "scenario.yaml"
+    if safe_stop is not None:
+        artifacts["safe_stop"] = "safe_stop.json"
+        if safe_stop.get("attempted"):
+            artifacts["safe_stop_stdout"] = "safe_stop_stdout.log"
+            artifacts["safe_stop_stderr"] = "safe_stop_stderr.log"
+
     manifest = {
         "schema_version": SCHEMA_VERSION,
         "run_id": run_id,
@@ -214,19 +271,10 @@ def write_final_artifacts(
             "robot": "kuavo5w",
             "simulator": "mujoco",
         },
-        "artifacts": {
-            "config": "config.yaml",
-            "resolved_config": "resolved_config.yaml",
-            "metrics": "metrics.json",
-            "result": "result.json",
-            "status": "status.json",
-            "events": "events.jsonl",
-            "stdout": "stdout.log",
-            "stderr": "stderr.log",
-            "command": "command.txt",
-            "capabilities": "capabilities.json",
-        },
+        "artifacts": artifacts,
     }
+    if config["entry_type"] == "scenario":
+        manifest["scenario"] = "scenario.yaml"
     write_json(episode_dir / "manifest.json", manifest)
     write_status(episode_dir, run_id, status, "finished")
     return result
