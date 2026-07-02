@@ -104,6 +104,38 @@
       padding: 12px;
       font: 12px/1.45 "Cascadia Mono", Consolas, monospace;
     }
+    .ep-list { max-height: 320px; overflow: auto; }
+    .ep-item {
+      cursor: pointer;
+      padding: 6px 8px;
+      border-bottom: 1px solid var(--line);
+      line-height: 1.4;
+    }
+    .ep-item:hover { background: var(--panel-2); }
+    .ep-item.active { background: #1a2a3b; border-left: 3px solid var(--accent); }
+    .ep-ok { color: var(--ok); font-weight: 650; }
+    .ep-fail { color: var(--danger); font-weight: 650; }
+    .ep-artifact-link {
+      color: var(--accent);
+      cursor: pointer;
+      text-decoration: underline;
+      margin-right: 10px;
+      font-size: 12px;
+    }
+    .ep-artifact-link:hover { color: #80d0ff; }
+    .ep-detail { margin-top: 8px; }
+    .ep-detail pre {
+      min-height: unset;
+      max-height: 400px;
+      margin: 4px 0 10px;
+    }
+    .ep-meta-row {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+    }
+    .ep-meta-row span { color: var(--muted); font-size: 12px; }
     @media (max-width: 900px) {
       main { grid-template-columns: 1fr; }
       pre { min-height: 360px; }
@@ -181,11 +213,36 @@
           </div>
         </div>
       </section>
+
+      <section>
+        <h2>Episode 管理</h2>
+        <div class="hint">运行白名单实验并查看最近 episode。base_probe 默认禁用，需 A 确认。</div>
+
+        <div class="flow">
+          <div class="group">
+            <h2>运行实验</h2>
+            <div class="grid">
+              <select id="experiment" class="wide"></select>
+              <input id="epOperator" class="wide" type="text" value="C" placeholder="operator" maxlength="32" style="min-height:38px;border:1px solid var(--line);background:var(--panel-2);color:var(--text);border-radius:6px;padding:8px 10px;font:inherit;">
+              <button id="runExperiment" class="wide primary">运行实验</button>
+            </div>
+          </div>
+
+          <div class="group">
+            <h2>最近 Episodes</h2>
+            <div id="episodeList" class="ep-list" style="color:var(--muted);font-size:12px;">暂无 episode。</div>
+            <div style="margin-top:8px">
+              <button id="refreshEpisodes">刷新列表</button>
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
 
     <section>
-      <h2>输出</h2>
+      <h2 id="outputTitle">输出</h2>
       <pre id="output">就绪。</pre>
+      <div id="epDetail" style="display:none;"></div>
     </section>
   </main>
 
@@ -330,8 +387,284 @@
       if (scriptSelect.value) callAction("script_fast", { script: scriptSelect.value });
     });
 
+    // ---------- episode management (C 任务) ----------
+
+    const epDetail = document.getElementById("epDetail");
+    const outputPre = document.getElementById("output");
+    const outputTitle = document.getElementById("outputTitle");
+    const experimentSelect = document.getElementById("experiment");
+    const epOperator = document.getElementById("epOperator");
+    const episodeList = document.getElementById("episodeList");
+
+    function showOutput() {
+      outputPre.style.display = "";
+      epDetail.style.display = "none";
+      outputTitle.textContent = "输出";
+    }
+
+    function showEpisodeDetail() {
+      outputPre.style.display = "none";
+      epDetail.style.display = "";
+      outputTitle.textContent = "Episode 详情";
+    }
+
+    async function loadExperiments() {
+      try {
+        const response = await fetch("/api/experiments");
+        const data = await response.json();
+        experimentSelect.innerHTML = "";
+        for (const exp of data.experiments || []) {
+          const option = document.createElement("option");
+          option.value = exp.name;
+          const label = exp.label || exp.name;
+          const avail = exp.available ? "" : " (config 缺失)";
+          option.textContent = `${label}${avail}`;
+          if (!exp.enabled) {
+            option.disabled = true;
+            option.textContent += ` [${exp.disabled_reason || "禁用"}]`;
+          }
+          if (!exp.available) {
+            option.disabled = true;
+          }
+          experimentSelect.appendChild(option);
+        }
+        if (!experimentSelect.options.length) {
+          const option = document.createElement("option");
+          option.value = "";
+          option.textContent = "无可用实验";
+          experimentSelect.appendChild(option);
+        }
+      } catch (e) {
+        experimentSelect.innerHTML = '<option value="">加载失败</option>';
+      }
+    }
+
+    function _el(tag, attrs, children) {
+      const el = document.createElement(tag);
+      if (attrs) {
+        for (const [k, v] of Object.entries(attrs)) {
+          if (k === "style" && typeof v === "string") { el.style.cssText = v; }
+          else if (k === "className") { el.className = v; }
+          else if (k === "onClick") { el.onclick = v; }
+          else if (k === "text") { el.textContent = v; }
+          else if (k === "title") { el.setAttribute("title", v); }
+          else { el.setAttribute(k, v); }
+        }
+      }
+      if (children) {
+        for (const ch of children) {
+          if (typeof ch === "string") { el.appendChild(document.createTextNode(ch)); }
+          else if (ch) { el.appendChild(ch); }
+        }
+      }
+      return el;
+    }
+
+    async function loadEpisodes() {
+      try {
+        const response = await fetch("/api/episodes");
+        const data = await response.json();
+        episodeList.innerHTML = "";
+        if (!data.episodes || !data.episodes.length) {
+          episodeList.appendChild(
+            _el("div", { style: "padding:4px 0;" }, ["暂无 episode（outputs/run_index.jsonl 未生成或为空）。"])
+          );
+          return;
+        }
+        for (const ep of data.episodes) {
+          const runId = String(ep.run_id || "");
+          const taskName = String(ep.task_name || "?");
+          const entryType = String(ep.entry_type || "");
+          const operator = String(ep.operator || "?");
+          const duration = (Number(ep.duration_sec) || 0).toFixed(1);
+          const ok = Boolean(ep.ok);
+
+          const row1Children = [
+            _el("span", { className: ok ? "ep-ok" : "ep-fail", text: ok ? "✓" : "✗" }),
+            " ",
+            _el("strong", {}, [taskName]),
+            " ",
+            _el("span", { style: "color:var(--muted);" }, [entryType]),
+          ];
+          if (ep.external_timing_available) {
+            row1Children.push(" ");
+            row1Children.push(_el("span", { title: "external timing available" }, ["⏱"]));
+          }
+
+          let row2Text = runId + " | operator: " + operator + " | " + duration + "s";
+          if (ep.safe_stop_ok !== null && ep.safe_stop_ok !== undefined) {
+            row2Text += " | safe_stop: " + (ep.safe_stop_ok ? "ok" : "fail");
+          }
+
+          const item = _el("div", { className: "ep-item", onClick: function () { viewEpisode(runId); } }, [
+            _el("div", {}, row1Children),
+            _el("div", { style: "font-size:11px;color:var(--muted);", text: row2Text }),
+          ]);
+          episodeList.appendChild(item);
+        }
+      } catch (e) {
+        episodeList.innerHTML = "";
+        episodeList.appendChild(
+          _el("div", { style: "color:var(--danger);", text: "加载失败: " + String(e) })
+        );
+      }
+    }
+
+    async function viewEpisode(runId) {
+      showEpisodeDetail();
+      epDetail.innerHTML = "";
+      epDetail.appendChild(_el("div", { style: "color:var(--muted);", text: "加载中..." }));
+      try {
+        const response = await fetch(`/api/episodes/${encodeURIComponent(runId)}`);
+        if (!response.ok) {
+          const err = await response.json();
+          epDetail.innerHTML = "";
+          epDetail.appendChild(
+            _el("div", { style: "color:var(--danger);", text: String(err.output || response.statusText) })
+          );
+          return;
+        }
+        const detail = await response.json();
+        const metrics = detail.metrics || {};
+        const artifacts = detail.artifacts || [];
+
+        const mkTaskName = String(metrics.task_name || "?");
+        const mkEntryType = String(metrics.entry_type || "?");
+        const mkOperator = String(metrics.operator || "?");
+        const mkOk = Boolean(metrics.ok);
+        const mkDuration = (Number(metrics.duration_sec) || 0).toFixed(1);
+        const mkFailure = String(metrics.failure_reason || "");
+
+        const container = _el("div", { className: "ep-detail" });
+
+        // meta row
+        const metaRow = _el("div", { className: "ep-meta-row" }, [
+          _el("span", {}, ["run_id: ", _el("strong", {}, [String(runId)])]),
+          _el("span", {}, ["task: ", _el("strong", {}, [mkTaskName])]),
+          _el("span", {}, ["type: " + mkEntryType]),
+          _el("span", {}, ["operator: " + mkOperator]),
+          _el("span", { className: mkOk ? "ep-ok" : "ep-fail", text: mkOk ? "✓ ok" : "✗ fail" }),
+          _el("span", {}, [mkDuration + "s"]),
+        ]);
+        container.appendChild(metaRow);
+
+        // failure reason
+        if (mkFailure) {
+          container.appendChild(
+            _el("div", { style: "color:var(--danger);margin-bottom:8px;", text: "failure: " + mkFailure })
+          );
+        }
+
+        // artifact links
+        const artDiv = _el("div", { style: "margin-bottom:8px;" }, [
+          _el("strong", {}, ["Artifacts: "]),
+        ]);
+        if (artifacts.length) {
+          for (const a of artifacts) {
+            const aName = String(a.name || "");
+            const link = _el("span", {
+              className: "ep-artifact-link",
+              onClick: function (ev) { ev.stopPropagation(); viewArtifact(runId, aName); },
+              text: aName,
+            });
+            artDiv.appendChild(link);
+            artDiv.appendChild(document.createTextNode(" "));
+          }
+        } else {
+          artDiv.appendChild(document.createTextNode("无"));
+        }
+        container.appendChild(artDiv);
+
+        // artifact content area
+        container.appendChild(_el("div", { id: "artifactContent" }));
+
+        // back button
+        container.appendChild(_el("div", { style: "margin-top:10px;" }, [
+          _el("button", { onClick: function () { showOutput(); outputPre.textContent = "就绪。"; } }, ["返回输出面板"]),
+        ]));
+
+        epDetail.innerHTML = "";
+        epDetail.appendChild(container);
+      } catch (e) {
+        epDetail.innerHTML = "";
+        epDetail.appendChild(
+          _el("div", { style: "color:var(--danger);", text: "请求失败: " + String(e) })
+        );
+      }
+    }
+
+    async function viewArtifact(runId, name) {
+      const contentDiv = document.getElementById("artifactContent");
+      contentDiv.innerHTML = "";
+      contentDiv.appendChild(_el("div", { style: "color:var(--muted);", text: "加载中..." }));
+      try {
+        const response = await fetch(
+          `/api/episodes/${encodeURIComponent(runId)}/artifact?name=${encodeURIComponent(name)}`
+        );
+        if (!response.ok) {
+          const err = await response.json();
+          contentDiv.innerHTML = "";
+          contentDiv.appendChild(
+            _el("div", { style: "color:var(--danger);", text: String(err.output || response.statusText) })
+          );
+          return;
+        }
+        const artifact = await response.json();
+        let display = "";
+        if (artifact.type === "json" || artifact.type === "jsonl") {
+          display = JSON.stringify(artifact.content, null, 2);
+        } else {
+          display = String(artifact.content || "(empty)");
+        }
+        contentDiv.innerHTML = "";
+        contentDiv.appendChild(_el("h3", {}, [String(name)]));
+        contentDiv.appendChild(_el("pre", { text: display }));
+      } catch (e) {
+        contentDiv.innerHTML = "";
+        contentDiv.appendChild(
+          _el("div", { style: "color:var(--danger);", text: "请求失败: " + String(e) })
+        );
+      }
+    }
+
+    async function runExperiment() {
+      const experiment = experimentSelect.value;
+      const operator = epOperator.value.trim() || "C";
+      if (!experiment) {
+        outputPre.textContent = "请选择一个实验。";
+        setDone(false, "未选择实验");
+        return;
+      }
+      showOutput();
+      setBusy(`正在运行实验 ${experiment}...`);
+      try {
+        const response = await fetch("/api/episodes/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json; charset=utf-8" },
+          body: JSON.stringify({ experiment, operator }),
+        });
+        const result = await response.json();
+        outputPre.textContent = `[${result.ts || new Date().toLocaleString()}] run experiment: ${experiment}\noperator: ${operator}\nexit=${result.code} ok=${result.ok}\nrun_id=${result.run_id || "N/A"}\n\n${result.output || ""}`;
+        setDone(Boolean(result.ok), result.ok ? `完成 (${result.run_id || "?"})` : "失败");
+        if (result.ok) {
+          setTimeout(loadEpisodes, 500);
+        }
+      } catch (e) {
+        outputPre.textContent = String(e);
+        setDone(false, "请求失败");
+      }
+    }
+
+    document.getElementById("runExperiment").addEventListener("click", runExperiment);
+    document.getElementById("refreshEpisodes").addEventListener("click", () => {
+      loadEpisodes();
+      outputPre.textContent = "episode 列表已刷新。";
+    });
+
     loadScenarios();
     loadScripts();
+    loadExperiments();
+    loadEpisodes();
   </script>
 </body>
 </html>

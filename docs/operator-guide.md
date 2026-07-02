@@ -54,7 +54,24 @@ Use `复原 / 停止` to publish zero base velocity and switch to `NoControl`.
 
 Use `停止仿真进程` only when the simulator needs to stop. It kills ROS launch/master processes and removes the MuJoCo pid file, so it is intentionally placed in the safety group.
 
-## 6. Command-Line Fallbacks
+## 6. Episode 管理（v0.2-alpha）
+
+Web 控制台的 "Episode 管理" 面板支持：
+
+- **运行实验** — 从白名单中选择实验配置，通过 episode runner 执行。B/C 角色可运行 `fast_health_check`、`read_only_interfaces`、`full_interfaces_check`。`base_probe` 需 A 确认。
+- **最近 Episodes** — 自动显示 `outputs/run_index.jsonl` 中最近 20 个 episode，包含 run_id、task_name、ok/duration/safe_stop_ok/external_timing。
+- **查看详情** — 点击 episode 查看 metrics、latency_breakdown、external_timing、stdout/stderr 等 artifact。
+
+详细指南见 `docs/web-episode-guide.md`。
+
+安全红线：
+- B/C 不自动运行 base_probe
+- B/C 不调用 restore
+- B/C 不运行 move_for
+- B/C 不执行任意 Python 作为默认实验入口
+- 所有运动任务由 A 确认
+
+## 7. Command-Line Fallbacks
 
 - `scripts/windows/start-kuavo5w-web-control.ps1`: recommended daily entry.
 - `scripts/windows/kuavo5w-restore.ps1`: emergency restore from another PowerShell.
