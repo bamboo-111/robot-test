@@ -6,6 +6,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
+import os
 from pathlib import Path
 
 
@@ -16,6 +17,7 @@ class ExecutorResult:
     stdout: str
     stderr: str
     command: str
+    duration_sec: float | None = None
 
 
 @dataclass(frozen=True)
@@ -72,10 +74,12 @@ def safe_stop_command_args(repo_root: Path) -> list[str]:
 
 def run_command(command_args: list[str], repo_root: Path, timeout_sec: int, timeout_message: str) -> ExecutorResult:
     text_command = command_text(command_args)
+    start = time.monotonic()
     try:
         completed = subprocess.run(
             command_args,
             cwd=repo_root,
+            env={**os.environ, "KUAVO_TIMING": "1"},
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -84,14 +88,17 @@ def run_command(command_args: list[str], repo_root: Path, timeout_sec: int, time
             timeout=timeout_sec,
             check=False,
         )
+        duration_sec = round(time.monotonic() - start, 3)
         return ExecutorResult(
             exit_code=completed.returncode,
             ok=completed.returncode == 0,
             stdout=completed.stdout or "",
             stderr=completed.stderr or "",
             command=text_command,
+            duration_sec=duration_sec,
         )
     except subprocess.TimeoutExpired as exc:
+        duration_sec = round(time.monotonic() - start, 3)
         stdout = exc.stdout or ""
         stderr = exc.stderr or ""
         if isinstance(stdout, bytes):
@@ -104,14 +111,17 @@ def run_command(command_args: list[str], repo_root: Path, timeout_sec: int, time
             stdout=stdout,
             stderr=stderr or timeout_message,
             command=text_command,
+            duration_sec=duration_sec,
         )
     except OSError as exc:
+        duration_sec = round(time.monotonic() - start, 3)
         return ExecutorResult(
             exit_code=127,
             ok=False,
             stdout="",
             stderr=str(exc),
             command=text_command,
+            duration_sec=duration_sec,
         )
 
 
@@ -147,14 +157,12 @@ def run_scenario(config: dict, repo_root: Path) -> ExecutorResult:
 
 def run_safe_stop(repo_root: Path, timeout_sec: int = 90) -> SafeStopResult:
     command_args = safe_stop_command_args(repo_root)
-    start = time.monotonic()
     result = run_command(
         command_args,
         repo_root,
         timeout_sec,
         f"safe stop timed out after {timeout_sec} seconds",
     )
-    duration_sec = round(time.monotonic() - start, 3)
     return SafeStopResult(
         attempted=True,
         ok=result.ok,
@@ -162,7 +170,7 @@ def run_safe_stop(repo_root: Path, timeout_sec: int = 90) -> SafeStopResult:
         stdout=result.stdout,
         stderr=result.stderr,
         command=result.command,
-        duration_sec=duration_sec,
+        duration_sec=result.duration_sec,
         failure_reason=None if result.ok else (result.stderr.strip() or result.stdout.strip() or f"exit_code={result.exit_code}"),
     )
 

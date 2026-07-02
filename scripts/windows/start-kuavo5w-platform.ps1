@@ -18,6 +18,18 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$TimingEnabled = $env:KUAVO_TIMING -eq "1"
+
+function Write-Timing {
+    param(
+        [string]$Phase,
+        [string]$Source = "powershell"
+    )
+    if ($TimingEnabled) {
+        $elapsedMs = [Math]::Round(([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()), 3)
+        Write-Host "[TIMING] source=$Source phase=$Phase t_ms=$elapsedMs"
+    }
+}
 
 function Convert-WindowsPathToWsl {
     param([string]$Path)
@@ -32,7 +44,13 @@ function Convert-WindowsPathToWsl {
 
 function Invoke-Wsl {
     param([string]$Command)
-    wsl -d $Distro -- bash -lc $Command
+    Write-Timing "wsl_call_start"
+    try {
+        wsl -d $Distro -- bash -lc $Command
+    }
+    finally {
+        Write-Timing "wsl_call_end"
+    }
 }
 
 function Invoke-Container {
@@ -47,8 +65,16 @@ function Invoke-ContainerScript {
     )
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($Script)
     $encoded = [Convert]::ToBase64String($bytes)
-    wsl -d $Distro -- docker exec $Container bash -lc "printf '%s' '$encoded' | base64 -d > '$RemotePath' && chmod +x '$RemotePath' && bash '$RemotePath'"
+    Write-Timing "docker_exec_start"
+    try {
+        wsl -d $Distro -- docker exec $Container bash -lc "printf '%s' '$encoded' | base64 -d > '$RemotePath' && chmod +x '$RemotePath' && KUAVO_TIMING='$env:KUAVO_TIMING' bash '$RemotePath'"
+    }
+    finally {
+        Write-Timing "docker_exec_end"
+    }
 }
+
+Write-Timing "ps_script_start"
 
 if (-not (Get-Command wsl -ErrorAction SilentlyContinue)) {
     throw "wsl was not found. Install WSL2 first."
@@ -70,17 +96,23 @@ Write-Host "ROBOT_VERSION: $RobotVersion"
 Write-Host "Launch: $Launch"
 Write-Host "VisualizeHumanoid: $($VisualizeHumanoid.IsPresent)"
 
+Write-Timing "docker_info_start"
 $dockerCheck = Invoke-Wsl "docker info >/dev/null 2>&1; echo `$?"
+Write-Timing "docker_info_end"
 if (($dockerCheck | Select-Object -Last 1).Trim() -ne "0") {
     throw "Docker is not reachable from $Distro. Start Docker Desktop and enable WSL integration."
 }
 
+Write-Timing "image_check_start"
 $imageCheck = Invoke-Wsl "docker image inspect '$Image' >/dev/null 2>&1; echo `$?"
+Write-Timing "image_check_end"
 if (($imageCheck | Select-Object -Last 1).Trim() -ne "0") {
     throw "Docker image not found: $Image. Build it first with scripts/wsl/build-kuavo-image-retry.sh."
 }
 
+Write-Timing "path_check_start"
 $pathCheck = Invoke-Wsl "[ -d '$RepoDir' ] && [ -d '$DeployDirWsl/kuavo_sim_platform' ] && [ -d '$DeployDirWsl/scripts/container' ]; echo `$?"
+Write-Timing "path_check_end"
 if (($pathCheck | Select-Object -Last 1).Trim() -ne "0") {
     throw "Required directories were not found in WSL. Repo=$RepoDir Deploy=$DeployDirWsl"
 }
@@ -89,7 +121,9 @@ if ($RecreateContainer) {
     Invoke-Wsl "docker rm -f '$Container' >/dev/null 2>&1 || true"
 }
 
+Write-Timing "container_check_start"
 $running = Invoke-Wsl "docker inspect -f '{{.State.Running}}' '$Container' 2>/dev/null || echo missing"
+Write-Timing "container_check_end"
 $runningState = ($running | Select-Object -Last 1).Trim()
 
 if ($runningState -eq "true") {
@@ -169,10 +203,13 @@ else {
 
 $openvinoCheck = Invoke-ContainerScript -RemotePath "/tmp/kuavo_platform_check_openvino.sh" -Script @'
 set -e
+kuavo_timing() { if [ "${KUAVO_TIMING:-}" = "1" ]; then echo "[TIMING] source=container phase=$1 t_ms=$(date +%s%3N)"; fi; }
+kuavo_timing openvino_check_start
 source /root/kuavo_ws/installed/setup.bash
 source /root/kuavo_ws/devel/setup.bash
 export LD_LIBRARY_PATH="/opt/drake/lib:/usr/lib:${LD_LIBRARY_PATH:-}"
 ldd /root/kuavo_ws/devel/lib/libnodelet_controller.so | grep -q 'libopenvino.so.2520 => not found' && exit 42
+kuavo_timing openvino_check_end
 exit 0
 '@
 if ($LASTEXITCODE -eq 42) {
@@ -194,6 +231,8 @@ echo stopped
 
 $launchRunning = Invoke-ContainerScript -RemotePath "/tmp/kuavo_platform_pid_check.sh" -Script @'
 set +e
+kuavo_timing() { if [ "${KUAVO_TIMING:-}" = "1" ]; then echo "[TIMING] source=container phase=$1 t_ms=$(date +%s%3N)"; fi; }
+kuavo_timing launch_check_start
 if test -f /tmp/kuavo5w_mujoco.pid; then
   pid="$(cat /tmp/kuavo5w_mujoco.pid 2>/dev/null)"
   if test -n "$pid"; then
@@ -201,6 +240,7 @@ if test -f /tmp/kuavo5w_mujoco.pid; then
       cmdline="$(tr '\000' ' ' < "/proc/$pid/cmdline")"
       case "$cmdline" in
         *roslaunch*|*start-kuavo5w-mujoco.sh*)
+          kuavo_timing launch_check_end
           echo 0
           exit 0
           ;;
@@ -209,6 +249,7 @@ if test -f /tmp/kuavo5w_mujoco.pid; then
   fi
 fi
 rm -f /tmp/kuavo5w_mujoco.pid
+kuavo_timing launch_check_end
 echo 1
 '@
 if (($launchRunning | Select-Object -Last 1).Trim() -ne "0") {
@@ -236,17 +277,21 @@ else {
 Write-Host "Waiting for ROS interfaces..."
 $waitTemplate = @'
 set -e
+kuavo_timing() { if [ "${KUAVO_TIMING:-}" = "1" ]; then echo "[TIMING] source=container phase=$1 t_ms=$(date +%s%3N)"; fi; }
+kuavo_timing ros_readiness_check_start
 source /root/kuavo_ws/installed/setup.bash
 source /root/kuavo_ws/devel/setup.bash
 export LD_LIBRARY_PATH="/opt/drake/lib:/usr/lib:${LD_LIBRARY_PATH:-}"
 for _i in $(seq 1 __LOOPS__); do
   if rostopic info /cmd_vel >/dev/null 2>&1 && rosservice info /mobile_manipulator_mpc_control >/dev/null 2>&1; then
+    kuavo_timing ros_readiness_check_end
     echo ready
     exit 0
   fi
   sleep 2
 done
 echo timeout
+kuavo_timing ros_readiness_check_end
 exit 1
 '@
 $waitLoops = [Math]::Max(1, [Math]::Ceiling($ReadyTimeoutSeconds / 2.0))
@@ -257,6 +302,7 @@ if ($null -eq $readyLast -or $readyLast.Trim() -ne "ready") {
     Write-Warning "ROS interfaces were not ready within $ReadyTimeoutSeconds seconds."
     Write-Host "Check logs:"
     Write-Host "  wsl -d $Distro -- docker exec -it $Container bash -lc 'tail -120 /tmp/kuavo5w_mujoco_start.log'"
+    Write-Timing "ps_script_end"
     exit 1
 }
 
@@ -270,13 +316,21 @@ if (-not [string]::IsNullOrWhiteSpace($Scenario)) {
     Write-Host "Running scenario: $Scenario"
     Invoke-ContainerScript -RemotePath "/tmp/kuavo_platform_run_scenario.sh" -Script @"
 set -e
+kuavo_timing() { if [ "`$KUAVO_TIMING" = "1" ]; then echo "[TIMING] source=container phase=`$1 t_ms=`$(date +%s%3N)"; fi; }
+kuavo_timing container_bash_start
+kuavo_timing source_installed_setup_start
 source /root/kuavo_ws/installed/setup.bash
+kuavo_timing source_installed_setup_end
+kuavo_timing source_devel_setup_start
 source /root/kuavo_ws/devel/setup.bash
+kuavo_timing source_devel_setup_end
 export LD_LIBRARY_PATH="/opt/drake/lib:/usr/lib:${LD_LIBRARY_PATH:-}"
 export PYTHONPATH="/root/kuavo_ws/src/kuavo_humanoid_sdk:/root/kuavo_ws/devel/lib/python3/dist-packages:/root/kuavo_ws/installed/lib/python3/dist-packages:/opt/ros/noetic/lib/python3/dist-packages"
 cd /root/kuavo_deploy
+kuavo_timing python_process_start
 python3 -m kuavo_sim_platform.kuavo_sim.scenario '$Scenario'
 "@
+    Write-Timing "ps_script_end"
     exit $LASTEXITCODE
 }
 
@@ -284,13 +338,21 @@ if (-not [string]::IsNullOrWhiteSpace($Script)) {
     Write-Host "Running imported script: $Script"
     Invoke-ContainerScript -RemotePath "/tmp/kuavo_platform_run_script.sh" -Script @"
 set -e
+kuavo_timing() { if [ "`$KUAVO_TIMING" = "1" ]; then echo "[TIMING] source=container phase=`$1 t_ms=`$(date +%s%3N)"; fi; }
+kuavo_timing container_bash_start
+kuavo_timing source_installed_setup_start
 source /root/kuavo_ws/installed/setup.bash
+kuavo_timing source_installed_setup_end
+kuavo_timing source_devel_setup_start
 source /root/kuavo_ws/devel/setup.bash
+kuavo_timing source_devel_setup_end
+kuavo_timing python_process_start
 export LD_LIBRARY_PATH="/opt/drake/lib:/usr/lib:${LD_LIBRARY_PATH:-}"
 export PYTHONPATH="/root/kuavo_ws/src/kuavo_humanoid_sdk:/root/kuavo_ws/devel/lib/python3/dist-packages:/root/kuavo_ws/installed/lib/python3/dist-packages:/opt/ros/noetic/lib/python3/dist-packages"
 cd /root/kuavo_deploy
 python3 '$Script'
 "@
+    Write-Timing "ps_script_end"
     exit $LASTEXITCODE
 }
 
@@ -304,13 +366,21 @@ if (-not [string]::IsNullOrWhiteSpace($Demo)) {
     Write-Host "Running demo: $Demo"
     Invoke-ContainerScript -RemotePath "/tmp/kuavo_platform_run_demo.sh" -Script @"
 set -e
+kuavo_timing() { if [ "`$KUAVO_TIMING" = "1" ]; then echo "[TIMING] source=container phase=`$1 t_ms=`$(date +%s%3N)"; fi; }
+kuavo_timing container_bash_start
+kuavo_timing source_installed_setup_start
 source /root/kuavo_ws/installed/setup.bash
+kuavo_timing source_installed_setup_end
+kuavo_timing source_devel_setup_start
 source /root/kuavo_ws/devel/setup.bash
+kuavo_timing source_devel_setup_end
+kuavo_timing python_process_start
 export LD_LIBRARY_PATH="/opt/drake/lib:/usr/lib:${LD_LIBRARY_PATH:-}"
 export PYTHONPATH="/root/kuavo_ws/src/kuavo_humanoid_sdk:/root/kuavo_ws/devel/lib/python3/dist-packages:/root/kuavo_ws/installed/lib/python3/dist-packages:/opt/ros/noetic/lib/python3/dist-packages"
 cd /root/kuavo_deploy
 python3 '$script'
 "@
+    Write-Timing "ps_script_end"
     exit $LASTEXITCODE
 }
 
@@ -321,3 +391,4 @@ Write-Host "Attach to container with:"
 Write-Host "  wsl -d $Distro -- docker exec -it $Container bash"
 Write-Host "View launch log with:"
 Write-Host "  wsl -d $Distro -- docker exec -it $Container bash -lc 'tail -120 /tmp/kuavo5w_mujoco_start.log'"
+Write-Timing "ps_script_end"

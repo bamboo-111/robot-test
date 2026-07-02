@@ -162,6 +162,14 @@ def write_safe_stop_artifacts(episode_dir: Path, safe_stop: dict[str, Any]) -> N
     write_json(episode_dir / "safe_stop.json", payload)
 
 
+def write_latency_breakdown(episode_dir: Path, latency: dict[str, Any]) -> None:
+    write_json(episode_dir / "latency_breakdown.json", latency)
+
+
+def write_external_timing(episode_dir: Path, external_timing: dict[str, Any]) -> None:
+    write_json(episode_dir / "external_timing.json", external_timing)
+
+
 def write_final_artifacts(
     episode_dir: Path,
     repo_root: Path,
@@ -178,12 +186,14 @@ def write_final_artifacts(
     duration_sec: float,
     failure_reason: str | None,
     safe_stop: dict[str, Any] | None = None,
+    capabilities: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     write_text(episode_dir / "stdout.log", stdout)
     write_text(episode_dir / "stderr.log", stderr)
     write_text(episode_dir / "command.txt", command)
 
-    capabilities = collect_capabilities(repo_root)
+    if capabilities is None:
+        capabilities = collect_capabilities(repo_root)
     write_json(episode_dir / "capabilities.json", capabilities)
 
     scenario = config.get("scenario") or {}
@@ -206,6 +216,8 @@ def write_final_artifacts(
         "stderr_log": "stderr.log",
         "config_path": "config.yaml",
         "resolved_config_path": "resolved_config.yaml",
+        "latency_breakdown_path": "latency_breakdown.json",
+        "external_timing_path": "external_timing.json",
     }
     if config["entry_type"] == "scenario":
         metrics["scenario_path"] = "scenario.yaml"
@@ -247,6 +259,8 @@ def write_final_artifacts(
         "stderr": "stderr.log",
         "command": "command.txt",
         "capabilities": "capabilities.json",
+        "latency_breakdown": "latency_breakdown.json",
+        "external_timing": "external_timing.json",
     }
     if config["entry_type"] == "scenario":
         artifacts["scenario"] = "scenario.yaml"

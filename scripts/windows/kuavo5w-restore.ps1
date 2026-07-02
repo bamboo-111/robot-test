@@ -4,6 +4,17 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$TimingEnabled = $env:KUAVO_TIMING -eq "1"
+
+function Write-Timing {
+    param([string]$Phase)
+    if ($TimingEnabled) {
+        $elapsedMs = [Math]::Round(([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()), 3)
+        Write-Host "[TIMING] source=restore phase=$Phase t_ms=$elapsedMs"
+    }
+}
+
+Write-Timing "restore_script_start"
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $platformScript = Join-Path $scriptDir "start-kuavo5w-platform.ps1"
@@ -21,4 +32,5 @@ Write-Host "Action: publish zero base velocity, then switch to NoControl."
     -Demo stop `
     -ReadyTimeoutSeconds 30
 
+Write-Timing "restore_script_end"
 exit $LASTEXITCODE

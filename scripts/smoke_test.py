@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import http.client
+import os
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -23,6 +25,15 @@ IMPORT_DIR_CANDIDATES = [
 ]
 
 
+def timing_enabled() -> bool:
+    return os.environ.get("KUAVO_TIMING") == "1"
+
+
+def emit_timing(phase: str, source: str = "python_check") -> None:
+    if timing_enabled():
+        print(f"[TIMING] source={source} phase={phase} t_ms={round(time.time() * 1000, 3)}")
+
+
 @dataclass
 class CheckResult:
     name: str
@@ -33,6 +44,7 @@ class CheckResult:
 
 
 def run_command(args: list[str], timeout: int = TIMEOUT_SECONDS) -> tuple[int, str, bool]:
+    emit_timing("subprocess_start")
     try:
         completed = subprocess.run(
             args,
@@ -52,6 +64,8 @@ def run_command(args: list[str], timeout: int = TIMEOUT_SECONDS) -> tuple[int, s
         return 124, output, True
     except OSError as exc:
         return 127, str(exc), False
+    finally:
+        emit_timing("subprocess_end")
 
 
 def docker_exec_bash(command: str) -> list[str]:
@@ -104,7 +118,10 @@ def check_container_running() -> CheckResult:
 
 
 def check_container_command(name: str, command: str, expected: str | None = None) -> CheckResult:
+    phase = name.replace(" ", "_").replace("/", "").lower()
+    emit_timing(f"{phase}_start")
     code, output, timed_out = run_command(docker_exec_bash(ros_bash(command)))
+    emit_timing(f"{phase}_end")
     if timed_out:
         return CheckResult(name, "FAIL", False, "command timed out")
     if code != 0:
@@ -138,6 +155,7 @@ def check_import_dir() -> CheckResult:
 
 
 def main() -> int:
+    emit_timing("python_process_start")
     print("[INFO] v0.1-alpha smoke test started")
     print("[INFO] This script is read-only and does not publish control commands")
 
@@ -159,6 +177,7 @@ def main() -> int:
     critical_failures = [result for result in checks if result.critical and not result.ok]
     warnings = [result for result in checks if result.level == "WARN"]
     print(f"[INFO] Summary: {len(checks) - len(critical_failures)} checks without critical failure, {len(critical_failures)} critical failure(s), {len(warnings)} warning(s)")
+    emit_timing("script_logic_end")
 
     if critical_failures:
         return 1

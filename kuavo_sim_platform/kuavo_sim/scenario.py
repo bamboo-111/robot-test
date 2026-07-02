@@ -1,7 +1,9 @@
 """YAML scenario runner for KuavoSim."""
 
 import argparse
+import os
 import sys
+import time
 
 from .modes import resolve_mode
 
@@ -26,6 +28,15 @@ SUPPORTED_ACTIONS = {
     "hand_position",
     "sleep",
 }
+
+
+def timing_enabled():
+    return os.environ.get("KUAVO_TIMING") == "1"
+
+
+def emit_timing(phase, source="python_scenario"):
+    if timing_enabled():
+        print(f"[TIMING] source={source} phase={phase} t_ms={round(time.time() * 1000, 3)}")
 
 
 def load_scenario(path):
@@ -70,7 +81,9 @@ def validate_scenario(data):
 
 
 def run_scenario(bot, scenario):
-    for step in scenario["steps"]:
+    for index, step in enumerate(scenario["steps"], start=1):
+        if index == 1:
+            emit_timing("first_action_start")
         action = step["action"]
         if action == "wait_ready":
             bot.wait_ready(timeout=step.get("timeout", 30.0))
@@ -181,14 +194,24 @@ def _sleep_reach(reach_time, bot):
 
 
 def main(argv=None):
+    emit_timing("python_process_start")
     parser = argparse.ArgumentParser(description="Run a KuavoSim YAML scenario")
     parser.add_argument("scenario", help="path to scenario YAML")
     args = parser.parse_args(argv)
+    emit_timing("scenario_load_start")
     scenario = load_scenario(args.scenario)
+    emit_timing("scenario_load_end")
+    emit_timing("python_import_start")
     from .client import KuavoSim
+    emit_timing("python_import_end")
 
+    emit_timing("kuavo_sim_init_start")
     with KuavoSim() as bot:
+        emit_timing("kuavo_sim_init_end")
+        emit_timing("script_logic_start")
         run_scenario(bot, scenario)
+        emit_timing("script_logic_end")
+    emit_timing("scenario_done")
 
 
 if __name__ == "__main__":
