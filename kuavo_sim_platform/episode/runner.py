@@ -63,6 +63,7 @@ def make_placeholder_config(
         "safety": {},
         "check": raw_config.get("check") or {},
         "scenario": raw_config.get("scenario") or {},
+        "capabilities": raw_config.get("capabilities") or {},
         "success_criteria": raw_config.get("success_criteria") or {},
     }
 
@@ -121,6 +122,7 @@ def build_latency_breakdown(
     timing: TimingCollector,
     notes: list[str],
     external_timing_available: bool,
+    capabilities_meta: dict | None = None,
 ) -> dict:
     payload = {
         "schema_version": "0.2",
@@ -138,6 +140,11 @@ def build_latency_breakdown(
     }
     for field in LATENCY_FIELDS:
         payload[field] = timing.get_ms(field)
+    # B-2: capabilities mode diagnostics
+    cap_meta = capabilities_meta or {}
+    payload["capabilities_mode"] = cap_meta.get("mode")
+    payload["capabilities_cache_hit"] = cap_meta.get("cache_hit")
+    payload["capabilities_cache_age_sec"] = cap_meta.get("cache_age_sec")
     return payload
 
 
@@ -302,8 +309,11 @@ def run_episode(config_path: Path, operator_override: str | None = None, repo_ro
     finished_at = now_iso()
     duration_sec = round(time.monotonic() - start_monotonic, 3)
 
+    capabilities_block = resolved_config.get("capabilities") or {}
+    cap_mode = str(capabilities_block.get("mode") or "full")
+    cap_max_age = int(capabilities_block.get("max_age_sec", 30) or 30)
     with timing.measure("capabilities_collect_ms"):
-        capabilities = collect_capabilities(repo_root)
+        capabilities, capabilities_meta = collect_capabilities(repo_root, mode=cap_mode, max_age_sec=cap_max_age)
 
     with timing.measure("artifact_write_ms"):
         result = write_final_artifacts(
@@ -323,6 +333,7 @@ def run_episode(config_path: Path, operator_override: str | None = None, repo_ro
             failure_reason=failure_reason,
             safe_stop=safe_stop,
             capabilities=capabilities,
+            capabilities_meta=capabilities_meta,
         )
 
     with timing.measure("index_update_ms"):
@@ -364,6 +375,7 @@ def run_episode(config_path: Path, operator_override: str | None = None, repo_ro
         timing=timing,
         notes=latency_notes,
         external_timing_available=bool(external_timing.get("available")),
+        capabilities_meta=capabilities_meta,
     )
     write_latency_breakdown(episode_dir, latency)
 

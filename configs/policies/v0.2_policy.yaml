@@ -22,6 +22,8 @@ roles:
       - smoke_test
       - bc_safe_probe
       - base_probe
+      - fast_health_check
+      - full_interfaces_check
 
   C:
     allow_entry_types:
@@ -34,6 +36,8 @@ roles:
       - smoke_test
       - bc_safe_probe
       - base_probe
+      - fast_health_check
+      - full_interfaces_check
 
 dangerous_actions:
   - stop_sim

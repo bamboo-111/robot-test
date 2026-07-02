@@ -233,7 +233,7 @@ def test_scenario_episode_writes_safe_stop_artifacts_without_running_commands(tm
             failure_reason=None,
         ),
     )
-    monkeypatch.setattr(runner, "collect_capabilities", lambda root: {"schema_version": "0.2", "can_run_check": True})
+    monkeypatch.setattr(runner, "collect_capabilities", lambda root, mode="full", max_age_sec=30: ({"schema_version": "0.2", "can_run_check": True}, {"mode": mode, "cache_hit": False, "cache_age_sec": None}))
     monkeypatch.setattr(artifacts, "collect_git_info", lambda root: {"commit": None, "branch": None, "dirty": None})
 
     result = runner.run_episode(config_path, repo_root=repo_root)
@@ -310,7 +310,7 @@ def test_check_episode_writes_latency_breakdown_without_running_commands(tmp_pat
             duration_sec=0.45,
         ),
     )
-    monkeypatch.setattr(runner, "collect_capabilities", lambda root: {"schema_version": "0.2", "can_run_check": True})
+    monkeypatch.setattr(runner, "collect_capabilities", lambda root, mode="full", max_age_sec=30: ({"schema_version": "0.2", "can_run_check": True}, {"mode": mode, "cache_hit": False, "cache_age_sec": None}))
     monkeypatch.setattr(artifacts, "collect_git_info", lambda root: {"commit": None, "branch": None, "dirty": None})
 
     result = runner.run_episode(config_path, repo_root=repo_root)
@@ -355,7 +355,7 @@ def test_scenario_safe_stop_skipped_has_null_safe_stop_timing(tmp_path, monkeypa
             duration_sec=0.2,
         ),
     )
-    monkeypatch.setattr(runner, "collect_capabilities", lambda root: {"schema_version": "0.2", "can_run_check": True})
+    monkeypatch.setattr(runner, "collect_capabilities", lambda root, mode="full", max_age_sec=30: ({"schema_version": "0.2", "can_run_check": True}, {"mode": mode, "cache_hit": False, "cache_age_sec": None}))
     monkeypatch.setattr(artifacts, "collect_git_info", lambda root: {"commit": None, "branch": None, "dirty": None})
 
     result = runner.run_episode(config_path, repo_root=repo_root)
@@ -405,7 +405,7 @@ def test_policy_failure_still_writes_latency_breakdown(tmp_path, monkeypatch):
     config_path = repo_root / "unknown_probe.yaml"
     config_path.write_text(yaml.safe_dump(scenario_config(task_name="unknown_probe", operator="B"), sort_keys=False), encoding="utf-8")
 
-    monkeypatch.setattr(runner, "collect_capabilities", lambda root: {"schema_version": "0.2", "can_run_check": True})
+    monkeypatch.setattr(runner, "collect_capabilities", lambda root, mode="full", max_age_sec=30: ({"schema_version": "0.2", "can_run_check": True}, {"mode": mode, "cache_hit": False, "cache_age_sec": None}))
     monkeypatch.setattr(artifacts, "collect_git_info", lambda root: {"commit": None, "branch": None, "dirty": None})
 
     result = runner.run_episode(config_path, repo_root=repo_root)

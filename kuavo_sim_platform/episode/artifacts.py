@@ -6,11 +6,53 @@ import json
 import platform
 import subprocess
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from .schema import SCHEMA_VERSION, dump_yaml
+
+
+# ---------------------------------------------------------------------------
+# Capabilities collection modes (B-2 performance optimization)
+# ---------------------------------------------------------------------------
+# full    : collect everything on every run (legacy behavior)
+# cached  : reuse outputs/cache/capabilities_latest.json while fresh
+# minimal : skip heavy ROS/Docker probes, return basic host info only
+# off     : do not collect capabilities at all
+CAPABILITIES_MODES = {"full", "cached", "minimal", "off"}
+DEFAULT_CAPABILITIES_MODE = "full"
+DEFAULT_CAPABILITIES_MAX_AGE_SEC = 30
+
+
+def capabilities_cache_path(repo_root: Path) -> Path:
+    """Return the on-disk capabilities cache path under ``outputs/cache``."""
+    return repo_root / "outputs" / "cache" / "capabilities_latest.json"
+
+
+def collect_minimal_capabilities(repo_root: Path) -> dict[str, Any]:
+    """Lightweight capabilities that avoid Docker/ROS/web network probes.
+
+    This is the fast path used by ``minimal`` and as the cache payload base:
+    it records basic host facts without the slow container/web health checks.
+    """
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "container_name": "kuavo5w_sim",
+        "container_running": None,
+        "docker_cli_available": None,
+        "docker_version": None,
+        "web_backend_available": None,
+        "web_backend_note": "minimal mode: not checked",
+        "platform": platform.platform(),
+        "python_version": sys.version.split()[0],
+        "git": collect_git_info(repo_root),
+        "can_run_check": True,
+        "can_run_scenario": None,
+        "can_run_script": None,
+        "notes": ["minimal mode: docker/ros/web probes skipped"],
+    }
 
 
 def now_iso() -> str:
@@ -83,7 +125,8 @@ def collect_git_info(repo_root: Path) -> dict[str, Any]:
     }
 
 
-def collect_capabilities(repo_root: Path) -> dict[str, Any]:
+def collect_full_capabilities(repo_root: Path) -> dict[str, Any]:
+    """Full capabilities collection including Docker/ROS/web probes (legacy path)."""
     docker_code, docker_version = command_output(["docker", "--version"], repo_root)
     container_code, container_state = command_output(
         ["docker", "inspect", "-f", "{{.State.Running}}", "kuavo5w_sim"],
@@ -120,6 +163,75 @@ def collect_capabilities(repo_root: Path) -> dict[str, Any]:
         "can_run_script": None,
         "notes": [],
     }
+
+
+def collect_capabilities(
+    repo_root: Path,
+    mode: str = DEFAULT_CAPABILITIES_MODE,
+    max_age_sec: int = DEFAULT_CAPABILITIES_MAX_AGE_SEC,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Collect host capabilities honoring a configurable ``mode``.
+
+    Returns ``(capabilities, meta)`` where ``meta`` carries the cache/mode
+    diagnostics recorded into latency_breakdown and metrics:
+
+        {"mode": str, "cache_hit": bool, "cache_age_sec": float | None}
+    """
+    if mode == "off":
+        meta = {"mode": "off", "cache_hit": False, "cache_age_sec": None}
+        return {}, meta
+
+    if mode == "minimal":
+        meta = {"mode": "minimal", "cache_hit": False, "cache_age_sec": None}
+        return collect_minimal_capabilities(repo_root), meta
+
+    if mode == "cached":
+        cache_path = capabilities_cache_path(repo_root)
+        cache_hit = False
+        cache_age_sec: float | None = None
+        if cache_path.is_file():
+            try:
+                cache_blob = json.loads(cache_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                cache_blob = None
+            # A corrupt or non-mapping cache file is treated as a miss.
+            if isinstance(cache_blob, dict):
+                cached_meta = cache_blob.get("_cache") or {}
+                collected_at = cached_meta.get("collected_at_epoch")
+                if isinstance(collected_at, (int, float)):
+                    # Use a wall-clock epoch so the cache survives process
+                    # restarts and reboots; time.monotonic() is not comparable
+                    # across runs. A negative age (clock skew) is rejected.
+                    cache_age_sec = round(time.time() - float(collected_at), 3)
+                    if 0 <= cache_age_sec < float(max_age_sec):
+                        cache_hit = True
+        meta = {
+            "mode": "cached",
+            "cache_hit": cache_hit,
+            "cache_age_sec": cache_age_sec,
+        }
+        if cache_hit:
+            # Strip the internal cache bookkeeping before handing back.
+            payload = {k: v for k, v in cache_blob.items() if k != "_cache"}
+            return payload, meta
+        # Cache miss: collect fresh and persist for the next run.
+        fresh = collect_full_capabilities(repo_root)
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            persisted = dict(fresh)
+            persisted["_cache"] = {
+                "collected_at_epoch": time.time(),
+                "collected_at_iso": now_iso(),
+            }
+            write_json(cache_path, persisted)
+        except OSError:
+            # Cache write failure must not fail the episode.
+            pass
+        return fresh, meta
+
+    # mode == "full" (default): legacy full-collection behavior.
+    meta = {"mode": "full", "cache_hit": False, "cache_age_sec": None}
+    return collect_full_capabilities(repo_root), meta
 
 
 def write_initial_artifacts(
@@ -187,14 +299,20 @@ def write_final_artifacts(
     failure_reason: str | None,
     safe_stop: dict[str, Any] | None = None,
     capabilities: dict[str, Any] | None = None,
+    capabilities_meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     write_text(episode_dir / "stdout.log", stdout)
     write_text(episode_dir / "stderr.log", stderr)
     write_text(episode_dir / "command.txt", command)
 
     if capabilities is None:
-        capabilities = collect_capabilities(repo_root)
-    write_json(episode_dir / "capabilities.json", capabilities)
+        capabilities_block = config.get("capabilities") or {}
+        mode = str(capabilities_block.get("mode") or DEFAULT_CAPABILITIES_MODE)
+        max_age_sec = int(capabilities_block.get("max_age_sec", DEFAULT_CAPABILITIES_MAX_AGE_SEC))
+        capabilities, capabilities_meta = collect_capabilities(repo_root, mode=mode, max_age_sec=max_age_sec)
+    capabilities_meta = capabilities_meta or {"mode": "full", "cache_hit": False, "cache_age_sec": None}
+    if capabilities:
+        write_json(episode_dir / "capabilities.json", capabilities)
 
     scenario = config.get("scenario") or {}
     metrics = {
@@ -219,6 +337,11 @@ def write_final_artifacts(
         "latency_breakdown_path": "latency_breakdown.json",
         "external_timing_path": "external_timing.json",
     }
+    # B-2: capabilities collection diagnostics
+    metrics["capabilities_mode"] = capabilities_meta.get("mode")
+    metrics["capabilities_cache_hit"] = capabilities_meta.get("cache_hit")
+    if capabilities_meta.get("cache_age_sec") is not None:
+        metrics["capabilities_cache_age_sec"] = capabilities_meta["cache_age_sec"]
     if config["entry_type"] == "scenario":
         metrics["scenario_path"] = "scenario.yaml"
         metrics["scenario_file"] = scenario.get("file")
@@ -258,10 +381,14 @@ def write_final_artifacts(
         "stdout": "stdout.log",
         "stderr": "stderr.log",
         "command": "command.txt",
-        "capabilities": "capabilities.json",
         "latency_breakdown": "latency_breakdown.json",
         "external_timing": "external_timing.json",
     }
+    # Only register capabilities when capabilities.json was actually written
+    # (e.g. skipped in capabilities.mode=off), so manifest never points at a
+    # missing artifact.
+    if capabilities:
+        artifacts["capabilities"] = "capabilities.json"
     if config["entry_type"] == "scenario":
         artifacts["scenario"] = "scenario.yaml"
     if safe_stop is not None:
