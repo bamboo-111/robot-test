@@ -1,5 +1,5 @@
-﻿<!doctype html>
-<html lang="en">
+<!doctype html>
+<html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -7,12 +7,13 @@
   <style>
     :root {
       color-scheme: dark;
-      --bg: #111317;
-      --panel: #191d23;
-      --panel-2: #202630;
+      --bg: #101216;
+      --panel: #181c22;
+      --panel-2: #20262e;
+      --panel-3: #11161d;
       --text: #eef2f7;
       --muted: #9ca8b8;
-      --line: #303846;
+      --line: #313946;
       --accent: #4fb3ff;
       --danger: #ff5b6b;
       --ok: #3fd183;
@@ -26,111 +27,73 @@
       font: 14px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
     main {
-      width: min(1100px, calc(100vw - 32px));
+      width: min(1240px, calc(100vw - 32px));
       margin: 24px auto;
       display: grid;
-      grid-template-columns: 340px 1fr;
+      grid-template-columns: minmax(360px, 440px) 1fr;
       gap: 16px;
-    }
-    h1 {
-      grid-column: 1 / -1;
-      margin: 0 0 4px;
-      font-size: 24px;
-      font-weight: 650;
-      letter-spacing: 0;
     }
     .topbar {
       grid-column: 1 / -1;
       display: flex;
       justify-content: space-between;
-      align-items: center;
+      align-items: flex-start;
       gap: 12px;
       flex-wrap: wrap;
     }
-    .topbar h1 { grid-column: auto; }
-    a.nav-link {
-      min-height: 36px;
+    h1 { margin: 0; font-size: 24px; font-weight: 650; letter-spacing: 0; }
+    .sub { margin-top: 4px; color: var(--muted); max-width: 820px; }
+    a.nav-link, button, select, input[type="file"] {
+      min-height: 38px;
       border: 1px solid var(--line);
       background: var(--panel-2);
       color: var(--text);
       border-radius: 6px;
       padding: 8px 10px;
+      font: inherit;
       text-decoration: none;
     }
-    a.nav-link:hover { border-color: var(--accent); }
-    .sub {
-      grid-column: 1 / -1;
-      margin: -8px 0 8px;
-      color: var(--muted);
-    }
+    a.nav-link:hover, button:hover { border-color: var(--accent); }
+    button { cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+    button.primary { background: #173348; border-color: #25668f; }
+    button.danger { background: #481b24; border-color: #8f2c3d; }
+    button.warn { background: #3f3416; border-color: #7a6424; }
+    button:disabled { opacity: .55; cursor: wait; }
+    select, input[type="file"] { width: 100%; }
     section {
       background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 8px;
       padding: 14px;
+      min-width: 0;
     }
-    h2 {
-      margin: 0 0 12px;
-      font-size: 15px;
-      font-weight: 650;
-    }
-    .grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-    }
-    button, select {
-      min-height: 38px;
-      border: 1px solid var(--line);
-      background: var(--panel-2);
-      color: var(--text);
-      border-radius: 6px;
-      padding: 8px 10px;
-      font: inherit;
-    }
-    input[type="text"] {
-      width: 100%;
-      min-height: 38px;
-      border: 1px solid var(--line);
-      background: var(--panel-2);
-      color: var(--text);
-      border-radius: 6px;
-      padding: 8px 10px;
-      font: inherit;
-    }
-    button {
-      cursor: pointer;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-    }
-    button:hover { border-color: var(--accent); }
-    button.primary { background: #173348; border-color: #25668f; }
-    button.danger { background: #481b24; border-color: #8f2c3d; }
-    button.warn { background: #3f3416; border-color: #7a6424; }
-    button:disabled { opacity: .55; cursor: wait; }
+    h2 { margin: 0 0 10px; font-size: 15px; font-weight: 650; }
+    .panel-stack { display: grid; gap: 12px; }
+    .flow { display: grid; gap: 10px; }
+    .group { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 2px; }
+    .group:first-child { border-top: 0; padding-top: 0; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .wide { grid-column: 1 / -1; }
-    .status {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      color: var(--muted);
-      margin-bottom: 12px;
-    }
-    .dot {
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-      background: var(--muted);
-    }
+    .status { display: flex; align-items: center; gap: 8px; color: var(--muted); margin-bottom: 12px; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
     .dot.ok { background: var(--ok); }
     .dot.fail { background: var(--danger); }
     .dot.busy { background: var(--warn); }
+    .hint { color: var(--muted); font-size: 12px; margin: -4px 0 8px; }
+    .meta {
+      min-height: 74px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel-3);
+      color: var(--muted);
+      padding: 8px 10px;
+      font: 12px/1.45 "Cascadia Mono", Consolas, monospace;
+      overflow-wrap: anywhere;
+    }
     pre {
       margin: 0;
-      min-height: 520px;
-      max-height: calc(100vh - 200px);
+      min-height: 640px;
+      max-height: calc(100vh - 160px);
       overflow: auto;
       white-space: pre-wrap;
       word-break: break-word;
@@ -141,91 +104,84 @@
       padding: 12px;
       font: 12px/1.45 "Cascadia Mono", Consolas, monospace;
     }
-    .row {
-      display: flex;
-      gap: 10px;
-      align-items: center;
-      margin-top: 10px;
-    }
-    .meta {
-      min-height: 58px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: #10141a;
-      color: var(--muted);
-      padding: 8px 10px;
-      font: 12px/1.45 "Cascadia Mono", Consolas, monospace;
-      overflow-wrap: anywhere;
-    }
-    .stack {
-      display: grid;
-      gap: 10px;
-      margin-top: 16px;
-      padding-top: 14px;
-      border-top: 1px solid var(--line);
-    }
-    .hint {
-      color: var(--muted);
-      font-size: 12px;
-      margin: -4px 0 0;
-    }
-    input[type="file"] {
-      width: 100%;
-      min-height: 38px;
-      border: 1px solid var(--line);
-      background: var(--panel-2);
-      color: var(--text);
-      border-radius: 6px;
-      padding: 7px 10px;
-      font: inherit;
-    }
-    select { width: 100%; }
-    @media (max-width: 820px) {
+    @media (max-width: 900px) {
       main { grid-template-columns: 1fr; }
       pre { min-height: 360px; }
+      .grid { grid-template-columns: 1fr; }
+      .wide { grid-column: auto; }
     }
   </style>
 </head>
 <body>
   <main>
     <div class="topbar">
-      <h1>Kuavo 5-W 控制台</h1>
+      <div>
+        <h1>Kuavo 5-W 控制台</h1>
+        <div class="sub">日常实验以 GUI 仿真为准；后台接口检查只确认 ROS/service 可用，不能验证动作效果。</div>
+      </div>
       <a class="nav-link" href="/ssh_monitor.html">SSH 实时监控</a>
     </div>
-    <div class="sub">本地脚本控制台：启动仿真、执行脚本、复原、暂停/恢复 MPC、选择 YAML 场景。</div>
 
+    <div class="panel-stack">
+      <section>
+        <h2>流程控制</h2>
+        <div class="status"><span id="dot" class="dot"></span><span id="status">空闲</span></div>
 
-    <section>
-      <h2>操作</h2>
-      <div class="status"><span id="dot" class="dot"></span><span id="status">空闲</span></div>
-      <div class="grid">
-        <button class="primary" data-action="connect">启动 / 连接 GUI</button>
-        <button data-action="connect_headless">低负载连接</button>
-        <button data-action="probe">安全探测</button>
-        <button data-action="forward">前进 Demo</button>
-        <button class="danger" data-action="restore">复原 / 停止</button>
-        <button class="warn" data-action="pause">暂停 MPC</button>
-        <button data-action="resume">恢复 MPC</button>
-        <button class="warn" data-action="sleep">休眠仿真</button>
-        <button data-action="log">查看日志</button>
-      </div>
+        <div class="flow">
+          <div class="group">
+            <h2>准备与连接</h2>
+            <div class="hint">动作实验默认使用 GUI 仿真，便于观察手臂、底盘和复合动作。</div>
+            <div class="grid">
+              <button class="primary wide" data-action="connect">启动 / 连接 GUI 仿真</button>
+              <button data-action="status">检查 ROS Ready</button>
+              <button data-action="backend_check">后台接口检查</button>
+            </div>
+          </div>
 
-      <div class="row">
-        <select id="scenario"></select>
-      </div>
-      <div class="row">
-        <button id="runScenario" class="wide primary">运行场景</button>
-      </div>
+          <div class="group">
+            <h2>实验运行</h2>
+            <div class="grid">
+              <button data-action="probe">安全探测</button>
+              <button data-action="forward">前进 Demo</button>
+              <select id="scenario" class="wide"></select>
+              <button id="runScenario" class="wide primary">运行 YAML 场景</button>
+            </div>
+          </div>
 
-      <div class="stack">
-        <h2>导入脚本</h2>
-        <input id="scriptFile" type="file" accept=".py,text/x-python,text/plain">
-        <button id="importScript" class="wide">导入脚本</button>
-        <select id="script"></select>
-        <div id="scriptMeta" class="meta">未选择脚本。</div>
-        <button id="runScript" class="wide primary">运行脚本</button>
-      </div>
-    </section>
+          <div class="group">
+            <h2>导入脚本</h2>
+            <div class="hint">列表隐藏导入烟雾测试脚本；诊断脚本和实验动作会显示分类。</div>
+            <div class="grid">
+              <input id="scriptFile" class="wide" type="file" accept=".py,text/x-python,text/plain">
+              <button id="importScript" class="wide">导入脚本</button>
+              <select id="script" class="wide"></select>
+              <div id="scriptMeta" class="meta wide">未选择脚本。</div>
+              <button id="runScript" class="wide primary">运行选中脚本</button>
+            </div>
+          </div>
+
+          <div class="group">
+            <h2>观察与诊断</h2>
+            <div class="grid">
+              <button data-action="log">查看 MuJoCo 日志</button>
+              <button data-action="interfaces">检查 ROS 接口</button>
+              <button data-action="smoke_test">运行 Smoke Test</button>
+              <button data-action="env_snapshot">采集环境快照</button>
+            </div>
+          </div>
+
+          <div class="group">
+            <h2>安全控制</h2>
+            <div class="grid">
+              <button class="warn" data-action="pause">暂停 MPC</button>
+              <button data-action="resume">恢复 MPC</button>
+              <button class="danger" data-action="restore">复原 / 停止</button>
+              <button class="danger" data-action="stop_sim">停止仿真进程</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
 
     <section>
       <h2>输出</h2>
@@ -263,7 +219,7 @@
 
     async function callAction(name, params = {}) {
       const query = new URLSearchParams({ name, ...params });
-      setBusy(`姝ｅ湪鎵ц ${name}...`);
+      setBusy(`正在执行 ${name}...`);
       try {
         const response = await fetch(`/api/action?${query.toString()}`);
         const result = await response.json();
@@ -300,17 +256,9 @@
       scriptsByName.clear();
       for (const item of data.script_info || []) {
         scriptsByName.set(item.name, item);
-      }
-      const scriptNames = (data.script_info || []).length
-        ? data.script_info.map((item) => item.name)
-        : (data.scripts || []);
-      for (const name of scriptNames) {
-        const info = scriptsByName.get(name);
         const option = document.createElement("option");
-        option.value = name;
-        option.textContent = info
-          ? `${name} | ${info.sha256_short} | ${info.mtime}`
-          : name;
+        option.value = item.name;
+        option.textContent = `${item.name} | ${item.category} | ${item.sha256_short}`;
         scriptSelect.appendChild(option);
       }
       if (!scriptSelect.options.length) {
@@ -330,6 +278,8 @@
       }
       scriptMeta.textContent = [
         `name: ${info.name}`,
+        `category: ${info.category}`,
+        `description: ${info.description}`,
         `mtime: ${info.mtime}`,
         `size: ${info.size} bytes`,
         `sha256: ${info.sha256}`,
@@ -348,7 +298,7 @@
         const content = await file.text();
         const response = await fetch("/api/scripts/import", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json; charset=utf-8" },
           body: JSON.stringify({ name: file.name, content }),
         });
         const result = await response.json();
@@ -374,7 +324,6 @@
     });
 
     document.getElementById("importScript").addEventListener("click", importScript);
-
     scriptSelect.addEventListener("change", updateScriptMeta);
 
     document.getElementById("runScript").addEventListener("click", () => {
@@ -386,4 +335,3 @@
   </script>
 </body>
 </html>
-

@@ -11,6 +11,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+Write-Host "Legacy foreground MuJoCo entry. Prefer the Web console for normal experiments."
+Write-Host "Use this only when debugging roslaunch directly in the foreground."
+
 function Convert-WindowsPathToWsl {
     param([string]$Path)
     $resolved = (Resolve-Path -LiteralPath $Path).Path

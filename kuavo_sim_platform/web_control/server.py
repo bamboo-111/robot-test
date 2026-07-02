@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import locale
 import os
 import re
 import subprocess
@@ -23,32 +24,98 @@ WINDOWS_SCRIPT = ROOT / "scripts" / "windows" / "start-kuavo5w-platform.ps1"
 RESTORE_SCRIPT = ROOT / "scripts" / "windows" / "kuavo5w-restore.ps1"
 SCENARIO_DIR = ROOT / "kuavo_sim_platform" / "scenarios"
 IMPORTED_SCRIPT_DIR = ROOT / "kuavo_sim_platform" / "imported_scripts"
+SMOKE_TEST = ROOT / "scripts" / "smoke_test.py"
+ENV_SNAPSHOT = ROOT / "scripts" / "collect_env_snapshot.py"
+INSPECT_INTERFACES = ROOT / "kuavo_sim_platform" / "scripts" / "inspect_interfaces.py"
+INSPECT_INTERFACES_CONTAINER = "/root/kuavo_deploy/kuavo_sim_platform/scripts/inspect_interfaces.py"
 SCRIPT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*\.py$")
 MAX_IMPORT_BYTES = 512 * 1024
 COMMAND_LOCK = threading.Lock()
 
+SCRIPT_CATEGORIES = {
+    "bc_safe_probe.py": ("diagnostic", "read-only ROS availability probe"),
+    "ik_all_diag.py": ("diagnostic", "IK diagnostic sweep"),
+    "ik_diag.py": ("diagnostic", "single IK diagnostic"),
+    "ik_points_diag.py": ("diagnostic", "IK waypoint diagnostic"),
+    "tokenless_smoke_test.py": ("import-test", "web import smoke file"),
+    "web_import_smoke.py": ("import-test", "web import smoke file"),
+    "desktop_salute.py": ("experiment", "desktop-exported salute action"),
+    "left_ok_gesture.py": ("experiment", "left arm OK gesture"),
+    "make_heart.py": ("experiment", "two-arm heart gesture"),
+    "right_wave.py": ("experiment", "right-arm wave"),
+    "safe_square_probe.py": ("experiment", "safe base square probe"),
+    "salute_and_cruise.py": ("experiment", "combined arm and base action"),
+}
+HIDDEN_SCRIPT_CATEGORIES = {"import-test"}
+
 
 class CommandResult(dict):
     @classmethod
-    def from_completed(cls, completed: subprocess.CompletedProcess[str]):
+    def from_completed(cls, completed: subprocess.CompletedProcess[bytes]):
         return cls(
             ok=completed.returncode == 0,
             code=completed.returncode,
-            output=(completed.stdout or "") + (completed.stderr or ""),
+            output=decode_process_output(completed.stdout, completed.stderr),
             ts=time.strftime("%Y-%m-%d %H:%M:%S"),
         )
 
 
+def decode_bytes(data: bytes | None) -> str:
+    if not data:
+        return ""
+    if len(data) >= 4:
+        even_nuls = data[0::2].count(0)
+        odd_nuls = data[1::2].count(0)
+        half_len = max(1, len(data) // 2)
+        if odd_nuls / half_len > 0.25:
+            try:
+                return data.decode("utf-16le")
+            except UnicodeDecodeError:
+                pass
+        if even_nuls / half_len > 0.25:
+            try:
+                return data.decode("utf-16be")
+            except UnicodeDecodeError:
+                pass
+    encodings = [
+        "utf-8-sig",
+        "utf-8",
+        locale.getpreferredencoding(False),
+        "gb18030",
+        "cp936",
+    ]
+    seen = set()
+    for encoding in encodings:
+        if not encoding:
+            continue
+        key = encoding.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+        except LookupError:
+            continue
+    return data.decode("utf-8", errors="replace")
+
+
+def decode_process_output(stdout: bytes | None, stderr: bytes | None) -> str:
+    return decode_bytes(stdout) + decode_bytes(stderr)
+
+
 def run_command(args: list[str], timeout: int = 120) -> CommandResult:
+    env = os.environ.copy()
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    env.setdefault("PYTHONUTF8", "1")
     completed = subprocess.run(
         args,
         cwd=str(ROOT),
-        text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         timeout=timeout,
-        encoding="utf-8",
-        errors="replace",
+        env=env,
     )
     return CommandResult.from_completed(completed)
 
@@ -197,6 +264,14 @@ def quick_script(script_path: str) -> CommandResult:
     )
 
 
+def ros_interfaces() -> CommandResult:
+    return wsl_exec(container_python(f"python3 '{INSPECT_INTERFACES_CONTAINER}'"), timeout=90)
+
+
+def run_host_python(script: Path, timeout: int) -> CommandResult:
+    return run_command([sys.executable, str(script)], timeout=timeout)
+
+
 def list_scenarios() -> list[str]:
     if not SCENARIO_DIR.exists():
         return []
@@ -213,12 +288,18 @@ def script_info(path: Path) -> dict:
     data = path.read_bytes()
     stat = path.stat()
     digest = hashlib.sha256(data).hexdigest()
+    category, description = SCRIPT_CATEGORIES.get(
+        path.name, ("experiment", "imported script")
+    )
     return {
         "name": path.name,
         "size": len(data),
         "mtime": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(stat.st_mtime)),
         "sha256": digest,
         "sha256_short": digest[:12],
+        "category": category,
+        "description": description,
+        "visible": category not in HIDDEN_SCRIPT_CATEGORIES,
     }
 
 
@@ -230,6 +311,10 @@ def list_script_infos() -> list[dict]:
         for path in sorted(IMPORTED_SCRIPT_DIR.glob("*.py"), key=lambda item: item.name)
         if path.is_file()
     ]
+
+
+def list_visible_script_infos() -> list[dict]:
+    return [info for info in list_script_infos() if info["visible"]]
 
 
 def scenario_container_path(name: str) -> str:
@@ -298,6 +383,8 @@ def action(name: str, params: dict[str, list[str]]) -> CommandResult:
         return platform("-VisualizeHumanoid", "-ReadyTimeoutSeconds", "30", timeout=90)
     if name == "connect_headless":
         return platform("-ReadyTimeoutSeconds", "30", timeout=90)
+    if name == "backend_check":
+        return platform("-ReadyTimeoutSeconds", "10", timeout=40)
     if name == "probe":
         return platform("-RunProbe", "-ReadyTimeoutSeconds", "30", timeout=120)
     if name == "forward":
@@ -324,8 +411,16 @@ def action(name: str, params: dict[str, list[str]]) -> CommandResult:
             "rm -f /tmp/kuavo5w_mujoco.pid; echo simulator launch stopped",
             timeout=30,
         )
+    if name == "stop_sim":
+        return action("sleep", params)
     if name == "log":
         return wsl_exec("tail -120 /tmp/kuavo5w_mujoco_start.log", timeout=30)
+    if name == "smoke_test":
+        return run_host_python(SMOKE_TEST, timeout=90)
+    if name == "env_snapshot":
+        return run_host_python(ENV_SNAPSHOT, timeout=120)
+    if name == "interfaces":
+        return ros_interfaces()
     if name == "scenario":
         scenario = (params.get("name") or [""])[0]
         return platform(
@@ -368,6 +463,11 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_json({"scenarios": list_scenarios()})
             return
         if parsed.path == "/api/scripts":
+            all_infos = list_script_infos()
+            infos = [item for item in all_infos if item["visible"]]
+            self.send_json({"scripts": [item["name"] for item in infos], "script_info": infos})
+            return
+        if parsed.path == "/api/scripts/all":
             infos = list_script_infos()
             self.send_json({"scripts": [item["name"] for item in infos], "script_info": infos})
             return

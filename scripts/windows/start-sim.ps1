@@ -4,6 +4,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+Write-Host "Compatibility entry: daily experiments should start from the Web console."
+Write-Host "Forwarding to GUI simulation startup because action experiments need visual confirmation."
+
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $platformScript = Join-Path $scriptDir "start-kuavo5w-platform.ps1"
 
@@ -15,6 +18,7 @@ $args = @(
     "-NoProfile",
     "-ExecutionPolicy", "Bypass",
     "-File", $platformScript,
+    "-VisualizeHumanoid",
     "-ReadyTimeoutSeconds", "60"
 )
 

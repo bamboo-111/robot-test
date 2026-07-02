@@ -7,6 +7,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+Write-Host "Fallback entry: prefer scripts/windows/start-kuavo5w-web-control.ps1 for daily experiments."
+Write-Host "This menu is kept for no-browser or emergency operator fallback."
+
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Resolve-Path -LiteralPath (Join-Path $scriptDir "..\..")
 $platformScript = Join-Path $scriptDir "start-kuavo5w-platform.ps1"

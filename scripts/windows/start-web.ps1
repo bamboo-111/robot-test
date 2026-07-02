@@ -4,6 +4,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+Write-Host "Compatibility entry: use scripts/windows/start-kuavo5w-web-control.ps1 for the normal workflow."
+
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $webScript = Join-Path $scriptDir "start-kuavo5w-web-control.ps1"
 

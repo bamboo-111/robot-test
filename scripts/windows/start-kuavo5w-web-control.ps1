@@ -5,6 +5,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+$env:PYTHONIOENCODING = "utf-8"
+$env:PYTHONUTF8 = "1"
+
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Resolve-Path -LiteralPath (Join-Path $scriptDir "..\..")
 $server = Join-Path $repoRoot "kuavo_sim_platform\web_control\server.py"
