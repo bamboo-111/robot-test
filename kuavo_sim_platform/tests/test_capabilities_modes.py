@@ -146,6 +146,61 @@ def test_cached_mode_treats_stale_cache_as_miss(tmp_path, monkeypatch):
     assert meta["cache_hit"] is False
 
 
+def test_cached_mode_uses_wall_clock_epoch_not_monotonic(tmp_path, monkeypatch):
+    """The cache must persist a wall-clock epoch (not time.monotonic()) so it
+    survives process restarts/reboots, and a negative age (clock skew / reboot)
+    must be rejected rather than treated as fresh."""
+    import time
+
+    repo_root = _make_repo(tmp_path)
+    monkeypatch.setattr(artifacts, "collect_git_info", lambda root: {"commit": None, "branch": None, "dirty": None})
+
+    collect_capabilities(repo_root, mode="cached", max_age_sec=30)
+    cache_blob = json.loads(capabilities_cache_path(repo_root).read_text(encoding="utf-8"))
+    cache_meta = cache_blob.get("_cache") or {}
+
+    # Wall-clock epoch + ISO timestamp recorded, not a monotonic value.
+    assert isinstance(cache_meta.get("collected_at_epoch"), (int, float))
+    assert "collected_at_iso" in cache_meta and cache_meta["collected_at_iso"]
+    assert "collected_at_monotonic" not in cache_meta
+
+
+def test_cached_mode_rejects_future_collected_at_as_miss(tmp_path, monkeypatch):
+    """A cache whose collected_at_epoch is in the future (clock skew) yields a
+    negative age and must NOT be treated as a hit."""
+    import time
+
+    repo_root = _make_repo(tmp_path)
+    monkeypatch.setattr(artifacts, "collect_git_info", lambda root: {"commit": None, "branch": None, "dirty": None})
+
+    cache_path = capabilities_cache_path(repo_root)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(
+        json.dumps({"docker_cli_available": True, "_cache": {"collected_at_epoch": time.time() + 1000}}),
+        encoding="utf-8",
+    )
+    _, meta = collect_capabilities(repo_root, mode="cached", max_age_sec=30)
+    assert meta["cache_hit"] is False
+    assert meta["cache_age_sec"] is not None and meta["cache_age_sec"] < 0
+
+
+def test_cached_mode_treats_non_dict_cache_as_miss(tmp_path, monkeypatch):
+    """A corrupt or non-mapping cache file is a miss, not an error."""
+    repo_root = _make_repo(tmp_path)
+    monkeypatch.setattr(artifacts, "collect_git_info", lambda root: {"commit": None, "branch": None, "dirty": None})
+
+    cache_path = capabilities_cache_path(repo_root)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    # A JSON list (non-dict) and garbage text both must be tolerated.
+    cache_path.write_text("[1, 2, 3]", encoding="utf-8")
+    _, meta_list = collect_capabilities(repo_root, mode="cached", max_age_sec=30)
+    assert meta_list["cache_hit"] is False
+
+    cache_path.write_text("not json at all", encoding="utf-8")
+    _, meta_garbage = collect_capabilities(repo_root, mode="cached", max_age_sec=30)
+    assert meta_garbage["cache_hit"] is False
+
+
 # ---------------------------------------------------------------------------
 # end-to-end: latency_breakdown records mode/cache_hit
 # ---------------------------------------------------------------------------
@@ -202,3 +257,26 @@ def test_episode_off_mode_omits_capabilities_json(tmp_path, monkeypatch):
     latency = json.loads((result.episode_dir / "latency_breakdown.json").read_text(encoding="utf-8"))
     assert latency["capabilities_mode"] == "off"
     assert latency["capabilities_collect_ms"] is not None
+    # Manifest must NOT register a capabilities artifact when the file is absent.
+    manifest = json.loads((result.episode_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert "capabilities" not in manifest.get("artifacts", {})
+
+
+def test_episode_non_off_mode_registers_capabilities_in_manifest(tmp_path, monkeypatch):
+    """Sanity check: when capabilities ARE collected, manifest registers them."""
+    repo_root = _make_repo(tmp_path)
+    config_path = _write_check_config(repo_root, {"mode": "minimal", "max_age_sec": 30})
+
+    monkeypatch.setattr(
+        runner,
+        "run_executor",
+        lambda config, root: ExecutorResult(
+            exit_code=0, ok=True, stdout="ok", stderr="", command="mock", duration_sec=0.1
+        ),
+    )
+    monkeypatch.setattr(artifacts, "collect_git_info", lambda root: {"commit": None, "branch": None, "dirty": None})
+
+    result = runner.run_episode(config_path, repo_root=repo_root)
+    assert (result.episode_dir / "capabilities.json").exists()
+    manifest = json.loads((result.episode_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["artifacts"]["capabilities"] == "capabilities.json"

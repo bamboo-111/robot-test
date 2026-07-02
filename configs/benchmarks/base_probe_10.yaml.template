@@ -2,9 +2,13 @@
 # TEMPLATE - DISABLED BY DEFAULT
 # ============================================================================
 # This is a template for a base_probe benchmark. base_probe is a MOTION task
-# and may ONLY be run after operator A has explicitly approved it. The
-# benchmark runner refuses to execute benchmark configs whose `benchmark_id`
-# equals `base_probe_10` unless invoked with `--allow-motion`.
+# and may ONLY be run after operator A has explicitly approved it.
+#
+# Gating in run_benchmark.py is based on the EXPERIMENT, not the benchmark_id:
+# any benchmark whose referenced experiment has entry_type=scenario or a
+# task_name containing base_probe/base_forward/move_for is refused unless the
+# benchmark is launched with --allow-motion (operator A only). B/C must not
+# pass that flag.
 #
 # To enable: copy this file to `base_probe_10.yaml` (still gated by
 # --allow-motion) and have A confirm. B/C must NOT enable or run this without

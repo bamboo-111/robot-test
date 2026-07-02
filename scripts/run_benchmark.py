@@ -88,16 +88,33 @@ def load_benchmark_config(config_path: Path, allow_motion: bool) -> dict[str, An
     if not isinstance(cfg, dict):
         raise ValueError(f"benchmark config must be a mapping: {config_path}")
 
+    # Constrain where benchmark configs may live, so a benchmark cannot reach
+    # into arbitrary repo paths.
+    try:
+        config_path.relative_to(BENCHMARKS_DIR)
+    except ValueError:
+        raise ValueError(
+            f"benchmark config must live under configs/benchmarks: {config_path}"
+        )
+
     benchmark_id = str(cfg.get("benchmark_id") or config_path.stem)
     experiment_configs = cfg.get("experiment_configs") or []
     if not experiment_configs or not isinstance(experiment_configs, list):
         raise ValueError("benchmark config must list experiment_configs")
 
     resolved_experiments: list[Path] = []
+    experiments_root = ROOT / "configs" / "experiments"
     for entry in experiment_configs:
         exp_path = (ROOT / str(entry)).resolve() if not Path(str(entry)).is_absolute() else Path(str(entry))
         if not exp_path.is_file():
             raise FileNotFoundError(f"experiment config not found: {exp_path}")
+        # Experiments must live under configs/experiments.
+        try:
+            exp_path.relative_to(experiments_root)
+        except ValueError:
+            raise ValueError(
+                f"experiment config must live under configs/experiments: {exp_path}"
+            )
         if experiment_involves_motion(exp_path) and not allow_motion:
             raise PermissionError(
                 f"experiment {exp_path.name} involves motion/base_probe; "

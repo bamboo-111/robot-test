@@ -194,12 +194,17 @@ def collect_capabilities(
                 cache_blob = json.loads(cache_path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 cache_blob = None
-            cached_meta = (cache_blob or {}).get("_cache") or {}
-            collected_at = cached_meta.get("collected_at_monotonic")
-            if isinstance(collected_at, (int, float)):
-                cache_age_sec = round(time.monotonic() - float(collected_at), 3)
-                if cache_age_sec < float(max_age_sec):
-                    cache_hit = True
+            # A corrupt or non-mapping cache file is treated as a miss.
+            if isinstance(cache_blob, dict):
+                cached_meta = cache_blob.get("_cache") or {}
+                collected_at = cached_meta.get("collected_at_epoch")
+                if isinstance(collected_at, (int, float)):
+                    # Use a wall-clock epoch so the cache survives process
+                    # restarts and reboots; time.monotonic() is not comparable
+                    # across runs. A negative age (clock skew) is rejected.
+                    cache_age_sec = round(time.time() - float(collected_at), 3)
+                    if 0 <= cache_age_sec < float(max_age_sec):
+                        cache_hit = True
         meta = {
             "mode": "cached",
             "cache_hit": cache_hit,
@@ -214,7 +219,10 @@ def collect_capabilities(
         try:
             cache_path.parent.mkdir(parents=True, exist_ok=True)
             persisted = dict(fresh)
-            persisted["_cache"] = {"collected_at_monotonic": time.monotonic()}
+            persisted["_cache"] = {
+                "collected_at_epoch": time.time(),
+                "collected_at_iso": now_iso(),
+            }
             write_json(cache_path, persisted)
         except OSError:
             # Cache write failure must not fail the episode.
@@ -373,10 +381,14 @@ def write_final_artifacts(
         "stdout": "stdout.log",
         "stderr": "stderr.log",
         "command": "command.txt",
-        "capabilities": "capabilities.json",
         "latency_breakdown": "latency_breakdown.json",
         "external_timing": "external_timing.json",
     }
+    # Only register capabilities when capabilities.json was actually written
+    # (e.g. skipped in capabilities.mode=off), so manifest never points at a
+    # missing artifact.
+    if capabilities:
+        artifacts["capabilities"] = "capabilities.json"
     if config["entry_type"] == "scenario":
         artifacts["scenario"] = "scenario.yaml"
     if safe_stop is not None:

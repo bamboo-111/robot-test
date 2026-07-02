@@ -181,16 +181,20 @@ def build_checks(probe: str = "full") -> list[CheckResult]:
 
 
 def check_python_runner() -> CheckResult:
-    """Fast host-only check: confirm the Python episode runner imports cleanly."""
+    """Critical fast-path check: confirm the Python episode runner imports.
+
+    fast_health does not depend on ROS/Docker, but a broken episode-runner
+    import must still fail the check, so this is critical (not a warning).
+    """
     import importlib
 
     if str(ROOT) not in sys.path:
         sys.path.insert(0, str(ROOT))
     try:
         importlib.import_module("kuavo_sim_platform.episode")
-        return CheckResult("python runner", "PASS", True, "episode runner importable", critical=False)
+        return CheckResult("python runner", "PASS", True, "episode runner importable", critical=True)
     except Exception as exc:  # noqa: BLE001 - probe must not crash the check
-        return CheckResult("python runner", "WARN", False, str(exc), critical=False)
+        return CheckResult("python runner", "FAIL", False, str(exc), critical=True)
 
 
 def main() -> int:

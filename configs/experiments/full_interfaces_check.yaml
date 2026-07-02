@@ -1,7 +1,7 @@
 schema_version: "0.2"
 task_name: full_interfaces_check
 entry_type: check
-operator: A
+operator: B
 permission_level: read_only
 timeout_sec: 30
 
