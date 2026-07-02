@@ -79,7 +79,8 @@ BASE_PROBE_LABEL = "base_probe (需 A 确认)"
 BASE_PROBE_CONFIG = "configs/experiments/base_probe.yaml"
 
 RUN_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
-EPISODE_RUN_LOCK = threading.Lock()
+OPERATOR_RE = re.compile(r"^[A-Za-z0-9_.-]{1,32}$")
+MAX_EPISODE_RUN_BYTES = 4096
 
 
 class CommandResult(dict):
@@ -861,6 +862,8 @@ class Handler(SimpleHTTPRequestHandler):
                 length = int(self.headers.get("Content-Length", "0"))
                 if length <= 0:
                     raise ValueError("empty request body")
+                if length > MAX_EPISODE_RUN_BYTES:
+                    raise ValueError(f"request body too large; max {MAX_EPISODE_RUN_BYTES} bytes")
                 raw = self.rfile.read(length).decode("utf-8")
                 payload = json.loads(raw)
                 experiment = str(payload.get("experiment", "")).strip()
@@ -870,37 +873,22 @@ class Handler(SimpleHTTPRequestHandler):
                     raise ValueError("experiment is required")
                 if not operator:
                     raise ValueError("operator is required")
+                if not OPERATOR_RE.fullmatch(operator):
+                    raise ValueError("operator must match ^[A-Za-z0-9_.-]{1,32}$")
 
                 config_rel: str
                 if experiment == BASE_PROBE_KEY:
-                    if operator != "A":
-                        raise ValueError("base_probe requires operator=A confirmation (B/C 不允许自动运行)")
-                    config_rel = BASE_PROBE_CONFIG
-                elif experiment in EXPERIMENT_CONFIG_MAP:
+                    raise ValueError(
+                        "base_probe 不在第一批 Web episode runner 白名单中。运动任务需 A 直接执行。"
+                    )
+                if experiment in EXPERIMENT_CONFIG_MAP:
                     config_rel = EXPERIMENT_CONFIG_MAP[experiment]
                 else:
                     raise ValueError(f"experiment not whitelisted: {experiment}")
 
-                def _run():
-                    return _run_episode_subprocess(config_rel, operator)
-
-                if not EPISODE_RUN_LOCK.acquire(blocking=False):
-                    self.send_json(
-                        {
-                            "ok": False,
-                            "code": 409,
-                            "output": "another episode is already running",
-                            "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
-                        },
-                        status=409,
-                    )
-                    return
-                try:
-                    result = _run()
-                    status_code = 409 if result.get("code") == 409 else 200
-                    self.send_json(result, status=status_code)
-                finally:
-                    EPISODE_RUN_LOCK.release()
+                result = run_serialized(lambda: _run_episode_subprocess(config_rel, operator))
+                status_code = 409 if result.get("code") == 409 else 200
+                self.send_json(result, status=status_code)
             except Exception as exc:
                 self.send_json(
                     {

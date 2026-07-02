@@ -439,89 +439,174 @@
       }
     }
 
+    function _el(tag, attrs, children) {
+      const el = document.createElement(tag);
+      if (attrs) {
+        for (const [k, v] of Object.entries(attrs)) {
+          if (k === "style" && typeof v === "string") { el.style.cssText = v; }
+          else if (k === "className") { el.className = v; }
+          else if (k === "onClick") { el.onclick = v; }
+          else if (k === "text") { el.textContent = v; }
+          else if (k === "title") { el.setAttribute("title", v); }
+          else { el.setAttribute(k, v); }
+        }
+      }
+      if (children) {
+        for (const ch of children) {
+          if (typeof ch === "string") { el.appendChild(document.createTextNode(ch)); }
+          else if (ch) { el.appendChild(ch); }
+        }
+      }
+      return el;
+    }
+
     async function loadEpisodes() {
       try {
         const response = await fetch("/api/episodes");
         const data = await response.json();
+        episodeList.innerHTML = "";
         if (!data.episodes || !data.episodes.length) {
-          episodeList.innerHTML = '<div style="padding:4px 0;">暂无 episode（outputs/run_index.jsonl 未生成或为空）。</div>';
+          episodeList.appendChild(
+            _el("div", { style: "padding:4px 0;" }, ["暂无 episode（outputs/run_index.jsonl 未生成或为空）。"])
+          );
           return;
         }
-        episodeList.innerHTML = data.episodes.map(ep => {
-          const okClass = ep.ok ? "ep-ok" : "ep-fail";
-          const okText = ep.ok ? "✓" : "✗";
-          const safeStop = ep.safe_stop_ok === null || ep.safe_stop_ok === undefined
-            ? ""
-            : ` | safe_stop: ${ep.safe_stop_ok ? "ok" : "fail"}`;
-          const extTime = ep.external_timing_available
-            ? ' <span title="external timing available">⏱</span>'
-            : "";
-          return `<div class="ep-item" onclick="viewEpisode('${ep.run_id}')">
-            <div>
-              <span class="${okClass}">${okText}</span>
-              <strong>${ep.task_name || "?"}</strong>
-              <span style="color:var(--muted);">${ep.entry_type || ""}</span>
-              ${extTime}
-            </div>
-            <div style="font-size:11px;color:var(--muted);">
-              ${ep.run_id} | operator: ${ep.operator || "?"} | ${(ep.duration_sec || 0).toFixed(1)}s${safeStop}
-            </div>
-          </div>`;
-        }).join("");
+        for (const ep of data.episodes) {
+          const runId = String(ep.run_id || "");
+          const taskName = String(ep.task_name || "?");
+          const entryType = String(ep.entry_type || "");
+          const operator = String(ep.operator || "?");
+          const duration = (Number(ep.duration_sec) || 0).toFixed(1);
+          const ok = Boolean(ep.ok);
+
+          const row1Children = [
+            _el("span", { className: ok ? "ep-ok" : "ep-fail", text: ok ? "✓" : "✗" }),
+            " ",
+            _el("strong", {}, [taskName]),
+            " ",
+            _el("span", { style: "color:var(--muted);" }, [entryType]),
+          ];
+          if (ep.external_timing_available) {
+            row1Children.push(" ");
+            row1Children.push(_el("span", { title: "external timing available" }, ["⏱"]));
+          }
+
+          let row2Text = runId + " | operator: " + operator + " | " + duration + "s";
+          if (ep.safe_stop_ok !== null && ep.safe_stop_ok !== undefined) {
+            row2Text += " | safe_stop: " + (ep.safe_stop_ok ? "ok" : "fail");
+          }
+
+          const item = _el("div", { className: "ep-item", onClick: function () { viewEpisode(runId); } }, [
+            _el("div", {}, row1Children),
+            _el("div", { style: "font-size:11px;color:var(--muted);", text: row2Text }),
+          ]);
+          episodeList.appendChild(item);
+        }
       } catch (e) {
-        episodeList.innerHTML = `<div style="color:var(--danger);">加载失败: ${e}</div>`;
+        episodeList.innerHTML = "";
+        episodeList.appendChild(
+          _el("div", { style: "color:var(--danger);", text: "加载失败: " + String(e) })
+        );
       }
     }
 
     async function viewEpisode(runId) {
       showEpisodeDetail();
-      epDetail.innerHTML = '<div style="color:var(--muted);">加载中...</div>';
+      epDetail.innerHTML = "";
+      epDetail.appendChild(_el("div", { style: "color:var(--muted);", text: "加载中..." }));
       try {
-        const response = await fetch(`/api/episodes/${runId}`);
+        const response = await fetch(`/api/episodes/${encodeURIComponent(runId)}`);
         if (!response.ok) {
           const err = await response.json();
-          epDetail.innerHTML = `<div style="color:var(--danger);">${err.output || response.statusText}</div>`;
+          epDetail.innerHTML = "";
+          epDetail.appendChild(
+            _el("div", { style: "color:var(--danger);", text: String(err.output || response.statusText) })
+          );
           return;
         }
         const detail = await response.json();
         const metrics = detail.metrics || {};
-        const result = detail.result || {};
         const artifacts = detail.artifacts || [];
 
-        const artifactLinks = artifacts.map(a =>
-          `<span class="ep-artifact-link" onclick="viewArtifact('${runId}','${a.name}');event.stopPropagation();">${a.name}</span>`
-        ).join("");
+        const mkTaskName = String(metrics.task_name || "?");
+        const mkEntryType = String(metrics.entry_type || "?");
+        const mkOperator = String(metrics.operator || "?");
+        const mkOk = Boolean(metrics.ok);
+        const mkDuration = (Number(metrics.duration_sec) || 0).toFixed(1);
+        const mkFailure = String(metrics.failure_reason || "");
 
-        epDetail.innerHTML = `
-          <div class="ep-detail">
-            <div class="ep-meta-row">
-              <span>run_id: <strong>${runId}</strong></span>
-              <span>task: <strong>${metrics.task_name || "?"}</strong></span>
-              <span>type: ${metrics.entry_type || "?"}</span>
-              <span>operator: ${metrics.operator || "?"}</span>
-              <span class="${metrics.ok ? 'ep-ok' : 'ep-fail'}">${metrics.ok ? '✓ ok' : '✗ fail'}</span>
-              <span>${(metrics.duration_sec || 0).toFixed(1)}s</span>
-            </div>
-            ${metrics.failure_reason ? `<div style="color:var(--danger);margin-bottom:8px;">failure: ${metrics.failure_reason}</div>` : ""}
-            <div style="margin-bottom:8px;"><strong>Artifacts:</strong> ${artifactLinks || "无"}</div>
-            <div id="artifactContent"></div>
-            <div style="margin-top:10px;">
-              <button onclick="showOutput();outputPre.textContent='就绪。';">返回输出面板</button>
-            </div>
-          </div>`;
+        const container = _el("div", { className: "ep-detail" });
+
+        // meta row
+        const metaRow = _el("div", { className: "ep-meta-row" }, [
+          _el("span", {}, ["run_id: ", _el("strong", {}, [String(runId)])]),
+          _el("span", {}, ["task: ", _el("strong", {}, [mkTaskName])]),
+          _el("span", {}, ["type: " + mkEntryType]),
+          _el("span", {}, ["operator: " + mkOperator]),
+          _el("span", { className: mkOk ? "ep-ok" : "ep-fail", text: mkOk ? "✓ ok" : "✗ fail" }),
+          _el("span", {}, [mkDuration + "s"]),
+        ]);
+        container.appendChild(metaRow);
+
+        // failure reason
+        if (mkFailure) {
+          container.appendChild(
+            _el("div", { style: "color:var(--danger);margin-bottom:8px;", text: "failure: " + mkFailure })
+          );
+        }
+
+        // artifact links
+        const artDiv = _el("div", { style: "margin-bottom:8px;" }, [
+          _el("strong", {}, ["Artifacts: "]),
+        ]);
+        if (artifacts.length) {
+          for (const a of artifacts) {
+            const aName = String(a.name || "");
+            const link = _el("span", {
+              className: "ep-artifact-link",
+              onClick: function (ev) { ev.stopPropagation(); viewArtifact(runId, aName); },
+              text: aName,
+            });
+            artDiv.appendChild(link);
+            artDiv.appendChild(document.createTextNode(" "));
+          }
+        } else {
+          artDiv.appendChild(document.createTextNode("无"));
+        }
+        container.appendChild(artDiv);
+
+        // artifact content area
+        container.appendChild(_el("div", { id: "artifactContent" }));
+
+        // back button
+        container.appendChild(_el("div", { style: "margin-top:10px;" }, [
+          _el("button", { onClick: function () { showOutput(); outputPre.textContent = "就绪。"; } }, ["返回输出面板"]),
+        ]));
+
+        epDetail.innerHTML = "";
+        epDetail.appendChild(container);
       } catch (e) {
-        epDetail.innerHTML = `<div style="color:var(--danger);">请求失败: ${e}</div>`;
+        epDetail.innerHTML = "";
+        epDetail.appendChild(
+          _el("div", { style: "color:var(--danger);", text: "请求失败: " + String(e) })
+        );
       }
     }
 
     async function viewArtifact(runId, name) {
       const contentDiv = document.getElementById("artifactContent");
-      contentDiv.innerHTML = '<div style="color:var(--muted);">加载中...</div>';
+      contentDiv.innerHTML = "";
+      contentDiv.appendChild(_el("div", { style: "color:var(--muted);", text: "加载中..." }));
       try {
-        const response = await fetch(`/api/episodes/${runId}/artifact?name=${encodeURIComponent(name)}`);
+        const response = await fetch(
+          `/api/episodes/${encodeURIComponent(runId)}/artifact?name=${encodeURIComponent(name)}`
+        );
         if (!response.ok) {
           const err = await response.json();
-          contentDiv.innerHTML = `<div style="color:var(--danger);">${err.output || response.statusText}</div>`;
+          contentDiv.innerHTML = "";
+          contentDiv.appendChild(
+            _el("div", { style: "color:var(--danger);", text: String(err.output || response.statusText) })
+          );
           return;
         }
         const artifact = await response.json();
@@ -529,18 +614,17 @@
         if (artifact.type === "json" || artifact.type === "jsonl") {
           display = JSON.stringify(artifact.content, null, 2);
         } else {
-          display = artifact.content || "(empty)";
+          display = String(artifact.content || "(empty)");
         }
-        contentDiv.innerHTML = `<h3>${name}</h3><pre>${escapeHtml(display)}</pre>`;
+        contentDiv.innerHTML = "";
+        contentDiv.appendChild(_el("h3", {}, [String(name)]));
+        contentDiv.appendChild(_el("pre", { text: display }));
       } catch (e) {
-        contentDiv.innerHTML = `<div style="color:var(--danger);">请求失败: ${e}</div>`;
+        contentDiv.innerHTML = "";
+        contentDiv.appendChild(
+          _el("div", { style: "color:var(--danger);", text: "请求失败: " + String(e) })
+        );
       }
-    }
-
-    function escapeHtml(text) {
-      const div = document.createElement("div");
-      div.appendChild(document.createTextNode(text));
-      return div.innerHTML;
     }
 
     async function runExperiment() {
